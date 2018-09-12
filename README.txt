@@ -1,1 +1,1 @@
-pnw snr design
+pnw senior design
