@@ -155,7 +155,7 @@ end
 %no lag autocorr part
 %xlim_R = xlim_x;%int32(1000); % how far to scale the x axis
 fprintf("R(y):\n");
-    [R_x, R, R_f, R_fQI] = handle_R(y,length(y)-1,readfile,f,samplerate,resample_rate,0,0);
+    [R_x, R, R_f, R_fQI] = handle_R(y,length(y),readfile,f,samplerate,resample_rate,0,0);
     R_p = R_f^-1; %periods
     R_pQI = R_fQI^-1;
     R_spp = R_p * samplerate; %samples per period
@@ -213,9 +213,6 @@ fprintf("Lags used: [0-%d]\n",lags-1);
 % end
     
 if(doHE) %H,E equations part
-    if(length(y) > 600)
-        fprintf("! E & H will return unexpected results for large inputs (many samples)\n");
-    end
     %E: energy equation
     EM_rs = calcE(y_rs,lags);
     %H is similar to RM except it only Acorr's a range of points 0-L, not every point 
@@ -228,18 +225,19 @@ if(doHE) %H,E equations part
         fprintf("EM,HM comparison true.\n");
     else
         fprintf("! EM,HM comparison false, failed. fix this somehow?\n");
+        disp(find(HEMcompare_rs < 0));
     end
     epsilon = 0.4; %arbitrary small value
     fprintf("epsilon = %.2f\n",epsilon);
     %E - 2H > epsilon * E
     HEMcompare_rs_epsilon = HEMcompare_rs <= (epsilon * EM_rs(1:length(HEMcompare_rs)));
     %Lmin
-    [~, Lmin1_x_rs] = findpeaks(-HEMcompare_rs);
+    [~, Lmin1_x_rs] = findpeaks(-HEMcompare_rs(3:end)); %only check 2:lags
     if(isempty(Lmin1_x_rs)) %error check
         fprintf("! No peak found for Lmin1_x_rs. Set as right bound (more data needed?)...\n")
         Lmin1_x_rs = length(HEMcompare_rs);
     else
-        Lmin1_x_rs = Lmin1_x_rs(1)-1; %first valley
+        Lmin1_x_rs = Lmin1_x_rs(1)-1+2; %first valley, add 2 offset from above
     end
     [~, Lmin2_x_rs] = findpeaks(-HEMcompare_rs(Lmin1_x_rs+1:end));
     if(isempty(Lmin2_x_rs))
@@ -259,15 +257,19 @@ if(doHE) %H,E equations part
         fprintf("E,H comparison true.\n");
     else
         fprintf("! E,H comparison false, failed. fix this somehow?\n");
+        disp(find(HEcompare < 0));
     end
     HEcompare_epsilon = HEcompare <= (epsilon * E(1:length(HEcompare)));
     Lmin = Lmin1_x; %select final Lmin to use in H
+    %can give wrong harmonic? try comparing local minimums instead
+    %fix E, H comparison stuff first
     if(Lmin1_x_rs(1) < lags/2 && HEcompare(Lmin2_x) < HEcompare(Lmin1_x))
         Lmin = Lmin2_x;
     end
     %16 point range is temporary, will use 8 (+- 4) later
     Lmin_points = (Lmin+1)-3:(Lmin+1)+4; %get range of 8 points
     Lmin_points_ext = (Lmin+1)-7:(Lmin+1)+8; %range of 16 points
+    Lmin_points_ext(Lmin_points_ext > length(HEcompare)) = length(HEcompare);
     %determine HE_f:
     [~, peak] = findpeaks(-HEcompare(Lmin_points_ext));
     if(isempty(peak)) %error handle
@@ -286,7 +288,7 @@ if(doHE) %H,E equations part
     HE_f = samplerate/(HE_spp); %HE detected f
     fprintf('\nHE p detected pitch: HE_f = ') %print out HE_f results
     report_ptof(HE_f,readfile,f)
-    %
+    
     if(graphHE)
     E_pmult = 2; %2*x range for E
     EM_lag = lags*E_pmult; %2L
@@ -519,10 +521,10 @@ end
 
 function a = autoc(y,lags)
 %autocorrelation with lag range 0 to (lags-1), doesn't divide out variance
-    if(length(y) < lags+1)
-        y = [y zeros(1,lags+1-length(y))];
+    if(length(y) < lags*2+1)
+        y = [y zeros(1,lags*2+1-length(y))];
     end
-    y = y(1:lags+1); %use only L points
+    y = y(1:lags*2+1); %use only 2L points
     y_len = length(y);
     n = 2^nextpow2(2*y_len-1); %fft runs fastest on 2^n sized data
     a = ifft(fft(y,n) .* conj(fft(y,n))); %acorr = iF(F * F*) = iF(S)
@@ -533,11 +535,19 @@ function E = calcE(y,lags)
 %energy (no lag), with input range (0 to (lags-1)) * 2
     E_pmult = 2;% * L (= 2L used)
     E_lag = lags*E_pmult; %2L
+    endy = E_lag*2;
+    if(endy > length(y))
+        endy = length(y);
+    end
+    y = y(1:endy);
+    y = [y zeros(1,E_lag)+2]; %prep to stop array index errors
     E = zeros(1,lags); %prep, only doing limited lags
-    yE = [y zeros(1,E_lag)]; %prep to stop array index errors
-    E(1) = yE(1) .* yE(1);
-    for k = 2:lags %calculate E for all sets of 2L's, L=0 (k=1) is always 0
-        E(k) = sum(yE(1:E_pmult*k-E_pmult).^2); %sum up squares in range [0,2L]
+    y_squared = y .* y; %y^2 = y * y
+%     for k = 2:lags %calculate E for all sets of 2L's, L=0 (k=1) is always 0
+%         E(k) = sum(yE(1:E_pmult*k-E_pmult).^2); %sum up squares in range [0,2L]
+%     end
+    for c = 1:length(E)
+        E(c) = sum(y_squared(1:c*E_pmult)); %only sum c points, not all points
     end
 end
 
@@ -545,22 +555,18 @@ function H = calcH(y,lags)
 %autocorrelation with lag range 0 to (lags-1), doesn't divide out variance
 %only does up to L points for each lag
 %check this function again sometime
-    endy = lags;
+    endy = lags*2;
     if(endy > length(y))
         endy = length(y);
     end
-    y = y(1:endy); %use only y(0 to lags-1)
+    y = y(1:endy); %use only y(0 to lags*2-1)
     y = [y zeros(1,lags+2)]; %append extra zeros to avoid index errors
-    y_len = length(y);
-    a = zeros(1,lags); %set up with zeros
-    a(1) = y(1) .* y(1);
-    for c = 1:length(a)-1 %check this later
+    H = zeros(1,lags); %set up with zeros
+    for c = 1:length(H) %check this later
         %m = y_i * y_i-L = y(t) * y(t+c)
-        %y * y shifted left by L
-        m = y .* [y(c:end) zeros(1,c-1)];
-        a(c) = sum(m(1:c)); %only sum c points, not all points
+        m = y .* [y(c:end) zeros(1,c-1)]; %y * y shifted left by L
+        H(c) = sum(m(1:c)); %only sum c points, not all points
     end
-    H = a;
 
     if(false) %attempt at FFT optimization, do later
     %y = [y zeros(1,lags+2)];
