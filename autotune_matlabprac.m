@@ -4,6 +4,8 @@ clc, clear variables, close all, clear sound, clear sounds;
 
 global count; count = 420; %temp for quadratic interp graphs
 
+%test test
+
 %CONTROL VARIABLES
     %constants
     samplerate = 44100; %sample rate
