@@ -45,7 +45,7 @@ resample_rate = upsample_rate / downsample_rate;
 if(readfile == false)
     f = frequency; %known frequency
     p = f^-1; %period = 1/f
-    phase_samples = 22; %how many samples to shift the wave forward
+    phase_samples = 0; %how many samples to shift the wave forward
     a = samplerate * secondslength; %number of samples needed for X seconds
     c = samplerate/f * pcount; %number of samples to take for x
     samplesperperiod = samplerate/f;
@@ -63,7 +63,7 @@ if(readfile == false)
     if(fixedlength)
         x = x(1:a); 
     end
-    y = sin(2*pi*f.*x/samplerate + 2*pi*phase_samples/samplesperperiod);%,1/2); %make a wave y, ex: y = sin(w*x + O), w = 2*pi*f
+    y = sin(2*pi*f.*x/samplerate + phase_samples);%,1/2); %make a wave y, ex: y = sin(w*x + O), w = 2*pi*f
     %base period is samplerate
 else
     y = audioread(filename); %have y be a sound file of X samples, may not know the frequency?
@@ -384,6 +384,10 @@ end
 %     plot(Gfit_rsY,'.-.','MarkerSize',MarkerSizeResampled,'Color',graphcolors(3,:))
 %     ylim(ylimits)
 % end
+
+%your code
+[~, ~, target_f] = fetchnote(R_fQI);
+
 
 %playing sounds through resampling
 
