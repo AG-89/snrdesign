@@ -4,8 +4,8 @@ clc, clear variables, close all, clear sound, clear sounds;
 
 global count; count = 420; %temp for quadratic interp graphs
 
-%IM THE NEW FILE
-123566
+%im not alex
+2039738945
 
 %CONTROL VARIABLES
     %constants
