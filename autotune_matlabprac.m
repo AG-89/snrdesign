@@ -14,6 +14,7 @@ global count; count = 420; %temp for quadratic interp graphs
     global A4freq; A4freq = 440; %Freq (Hz) for note A4
     C4 = A4freq * 2^(-9/12); %middle c (C4) from A4
 
+    69
     %control
     downsample_rate = 8; %down/up sample by these factors, new pitch = f * d/u
     upsample_rate = 1;
