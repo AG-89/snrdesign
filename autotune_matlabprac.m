@@ -5,11 +5,7 @@ clc, clear variables, close all, clear sound, clear sounds;
 global count; count = 420; %temp for quadratic interp graphs
 
 %
-%
-%
-%
-count
-%%
+% im  alx gicumb
 
 %CONTROL VARIABLES
     %constants
