@@ -6,6 +6,7 @@ global count; count = 420; %temp for quadratic interp graphs
 
 %
 % im  alx gicumb
+1234
 
 %CONTROL VARIABLES
     %constants
