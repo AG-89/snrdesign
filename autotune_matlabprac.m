@@ -41,6 +41,7 @@ clc, clear variables, close all, clear sound, clear sounds;
 %END CVARS
 
 resample_rate = upsample_rate / downsample_rate;
+resample_period = downsample_rate / upsample_rate;
 %wave input section
 if(readfile == false)
     f = frequency; %known frequency
@@ -175,7 +176,7 @@ xlim_x_R_rs = xlim_x_R*resample_rate; %for resampled
 if(graphRy)
   Rplots = figure('Name','Full Autocorrelation');
   gs = graphsize; %alias, below sets position
-  set(Rplots,'Position', [screencenter(1)-gs(1)/2 screencenter(2)-gs(2)/2+100 gs(1) gs(2)]);
+  set(Rplots,'Position', [screencenter(1)-gs(1)/2-gs(1) screencenter(2)-gs(2)/2+100-gs(2)/2 gs(1) gs(2)]);
   subplot(1,1,1) %R(y)
      plot(R_x.*(xTimeUnits_modifier),normalize(R),'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
      title("R(y)")
@@ -187,6 +188,7 @@ if(graphRy)
 %      xlim([0 xlim_x_R_rs])
 %      ylim(ylimits)
 end
+figure(yplots)
 
 fprintf("Lags used: [0-%d]\n",lags-1);
     
@@ -331,8 +333,8 @@ end
 
 if(doHEcont) %H,E continuous
     %prepare arrays. fill with zeros to avoid checks in the loop
-    fC_tracker = zeros(1,length(y_rs)); %tracks detected frequency
-    note_tracker = zeros(1,length(y_rs)); %tracks closest note frequency
+    fC_tracker = zeros(1,length(y_rs)+1); %tracks detected frequency
+    note_tracker = zeros(1,length(y_rs)+1); %tracks closest note frequency
     error_tracker = zeros(1,10); %track errors without spamming console
     %mass array shifting, will want to implement with linked lists or etc.
     %to eliminate computation time
@@ -371,7 +373,7 @@ if(doHEcont) %H,E continuous
             HECcompare_rs_epsilon = (HECcompare_rs + max(HECcompare_rs)) .* HECcompare_rs_epsilon;
             %Lmin
             [~, Lmin1C_rs] = findpeaks(-HECcompare_rs_epsilon(3:end)); %only check 2:lags
-            if(isempty(Lmin1C_rs)) %error check
+            if(isempty(Lmin1C_rs)) %No valley found for Lmin1C_rs. (bad)
                 error_tracker(2) = error_tracker(2) + 1;
                 Lmin1C_rs = length(HECcompare_rs_epsilon);
             else
@@ -382,7 +384,7 @@ if(doHEcont) %H,E continuous
             else
                 [~, Lmin2C_rs] = findpeaks(-HECcompare_rs_epsilon(Lmin1C_rs+1:end));
             end
-            if(isempty(Lmin2C_rs))
+            if(isempty(Lmin2C_rs)) %No valley found for Lmin2C_rs.
                 error_tracker(3) = error_tracker(3) + 1;
                 Lmin2C_rs = Lmin1C_rs;
             else
@@ -410,7 +412,7 @@ if(doHEcont) %H,E continuous
             LminC_points_ext(LminC_points_ext > length(HECcompare)) = length(HECcompare);
             %determine HE_f:
             [~, peakC] = findpeaks(-HECcompare(LminC_points_ext));
-            if(isempty(peakC)) %error handle
+            if(isempty(peakC)) %no valley found for LminC
                 error_tracker(5) = error_tracker(5) + 1;
                 peakC = LminC_points_ext(end)-1; %-1 to stop indexing errors
             else
@@ -424,10 +426,10 @@ if(doHEcont) %H,E continuous
             HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-1; %QI
             HEC_p = HEC_spp/samplerate;
             HEC_f = samplerate/(HEC_spp); %detected f
-            if(i_rs > length(fC_tracker)) %allocate more space if needed
-                fC_tracker = [fC_tracker zeros(1,length(fC_tracker))];
-                note_tracker = [note_tracker zeros(1,length(note_tracker))];
-            end
+%             if(i_rs > length(fC_tracker)) %allocate more space if needed
+%                 fC_tracker = [fC_tracker zeros(1,length(fC_tracker))];
+%                 note_tracker = [note_tracker zeros(1,length(note_tracker))];
+%             end
             fC_tracker(i_rs) = HEC_f;
             [~,~,f_for_note_tracker] = fetchnote(HEC_f); %closest note f
             note_tracker(i_rs) = f_for_note_tracker;
@@ -437,16 +439,18 @@ if(doHEcont) %H,E continuous
     fprintf("\n");
     if(graphHEcont)
         FCplot = figure('Name','EH continuous f');
-            plot((0:length(fC_tracker)-1)./resample_rate.*(xTimeUnits_modifier),fC_tracker,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
+            set(FCplot,'Position', [screencenter(1)-gs(1)/2 screencenter(2)-gs(2)/2+100 gs(1)*2 gs(2)]);
+            plot((0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier),fC_tracker,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
             hold on
             if(~readfile)
-                plot((0:length(fC_tracker)-1)./resample_rate.*(xTimeUnits_modifier),ones(1,length(fC_tracker)).*f,'LineWidth',2,'Color',[0.5,0,0]);
+                plot((0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier),ones(1,length(fC_tracker)).*f,'LineWidth',2,'Color',[0.5,0,0]);
             end
             title("f detected")
             axis tight
-        FCplot = figure('Name','EH continuous notes');
+        Noteplot = figure('Name','EH continuous notes');
+            set(Noteplot,'Position', [screencenter(1)-gs(1)/2 screencenter(2)-gs(2)/2+100-gs(2)/2 gs(1)*2 gs(2)]);
             notes = ["C" "C#/Db" "D" "D#/Eb" "E" "F" "F#/Gb" "G" "G#/Ab" "A" "A#/Bb" "B"];
-            note_tracker(find(note_tracker < 1)) = 1; %remove zero f
+            note_tracker(note_tracker < 1) = 1; %remove zero f
             note_tracker_cents = round(12*log(note_tracker/C0)/log(2)); %convert to cents/100
             note_tracker_range = 19:max(note_tracker_cents); %G1 : highest
             note_tracker_octave = idivide(int32(note_tracker_range),int32(12)); %get octave number
@@ -455,10 +459,11 @@ if(doHEcont) %H,E continuous
             for a = 1:length(note_tracker_name)
                 note_tracker_name(a) = strcat(notes(note_tracker_index(a)),num2str(note_tracker_octave(a)));
             end
-            noteplot = plot((0:length(note_tracker)-1)./resample_rate.*(xTimeUnits_modifier),note_tracker_cents,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
+            noteplot = plot((0:length(note_tracker)-1).*resample_period.*(xTimeUnits_modifier),note_tracker_cents,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
             set(gca,'Ytick',note_tracker_range,'YTickLabel',note_tracker_name);
             title("closest note detected")
             ylim([min(note_tracker_range) max(note_tracker_cents)])
+         figure(FCplot)
     end
 end
 
