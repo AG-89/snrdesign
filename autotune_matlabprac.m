@@ -17,8 +17,8 @@ clc, clear variables, clear sound, clear sounds, close all;
     readfile = false; %read file or generate wave
         filename = 'File.wav'; %must be MONO, no stereo
         frequency = C4; %f to generate (Hz)
-        fixedlength = false; %generate fixed seconds
-            secondslength = 1; %number of seconds length to generate
+        fixedlength = true; %generate fixed seconds
+            secondslength = 0.5; %number of seconds length to generate
             pcount = 30; %number of periods to generate otherwise
     playsounds = false;
     volume = 10; %0-100 please
@@ -65,7 +65,7 @@ if(readfile == false)
     if(fixedlength)
         x = x(1:a); 
     end
-    y = sin(2*pi*f.*x/samplerate + 2*pi*phase_samples/samplesperperiod); %make a wave y, ex: y = sin(w*x + O), w = 2*pi*f
+    y = square(2*pi*f.*x/samplerate + 2*pi*phase_samples/samplesperperiod); %make a wave y, ex: y = sin(w*x + O), w = 2*pi*f
     %base period is samplerate
     fprintf("Generated sample count = %d (%.3f seconds)\n",length(x),length(x)/samplerate);
 else
@@ -196,6 +196,20 @@ if(graphRy && ~readfile)
 end
 figure(yplots) %bring to front
 
+%Curve Fitting part, left unfinished
+% if(true)
+%   fittype = 'cubicinterp'; %what type of curve to fit
+%   Gfitplots = figure('Name','Curve fits');
+%       Gfit = fit(R_x',R',fittype);
+%       plot(Gfit,R_x,R);
+%       title("R(y) fit")
+%   GfitplotsD = figure('Name','Curve fits discrete');
+%     GfitY = feval(Gfit,0:110)';
+%     fprintf("R(y)CF:\n");
+%     handle_R(GfitY,lags,readfile,f,samplerate,resample_rate,0,1);
+%     plot(GfitY)
+% end
+
 fprintf("Lags used: [0-%d]\n",lags-1);
 
 debugHEgraphs = false; %debug graphs
@@ -213,6 +227,8 @@ if(doHEcont) %H,E continuous
     H_lag = lags; %L
     y_Lbuffer = zeros(1,E_lag*resample_period); %holds some y data
     y_Lbuffer_rs = zeros(1,E_lag);
+    ynew_rsbuffer_diff = zeros(1,length(y_Lbuffer_rs)); %holds pitch shifting diffs
+    ynew_rsbuffer_ratio = zeros(1,length(y_Lbuffer_rs)); %holds pitch shifting ratios
     y_smallbuffer = zeros(1,resample_period);
     EC_rs = zeros(1,H_lag); %H&E of rs and non-rs
     HC_rs = zeros(1,H_lag);
@@ -225,10 +241,13 @@ if(doHEcont) %H,E continuous
     HEC_spp = 0;
     HEC_p = 0;
     HEC_f = 0;
+    HEC_f_diff = 0; %difference in f for pitch shift buffer
+    %HEC_f_diff_last = 0;
+    HEC_f_ratio = 1; %ratio of needed/detected
     %keep indexes as matlab 1:end. only use 0 for period calculation
     s = "";
     i_rs = 1;
-    print_samplei = false; %show sample i=#
+    print_samplei = true; %show sample i=#
     tic; %time this process
     for i = 1:length(y) %big ol' for loop, realtime will use a while loop
         %y_Lbuffer = [y_Lbuffer(2:end) y(i)];
@@ -247,10 +266,10 @@ if(doHEcont) %H,E continuous
                 EC_rs(a) = EC_rs(a) + EC_rs_newterm - y_Lbuffer_rs(E_lag-2*a+1).^2;
                 HC_rs(a) = HC_rs(a) + y_Lbuffer_rs(E_lag).*y_Lbuffer_rs(E_lag-a) - y_Lbuffer_rs(E_lag-a).*y_Lbuffer_rs(E_lag-2*a+1);
             end
-            %copy paste from doHE
-            HECcompare_rs = EC_rs - 2.*HC_rs;
+            HECcompare_rs = EC_rs - 2.*HC_rs; %E - 2H
             if(~all(HECcompare_rs >= 0)) %E >= 2H
-                error_tracker(1) = error_tracker(1) + 1;
+                error_tracker(1) = error_tracker(1) + 1; %E < 2H detected
+                %doesn't seem to matter
             end
             HECcompare_rs_epsilon = HECcompare_rs <= (epsilon * EC_rs);
             %make unqualifying points have high amplitude, excluding them from Lmin
@@ -327,41 +346,49 @@ if(doHEcont) %H,E continuous
                     HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-1; %QI
                     HEC_p = HEC_spp/samplerate;
                     HEC_f = samplerate/(HEC_spp); %detected f
+                    f_closest = fetchnote_fastf(HEC_f,A4freq,C0);
+                    %if not updated, these will retain previous value
+                    %update pitch diff = detected f - closest note f
+                    HEC_f_diff = HEC_f - f_closest;
+                    %ratio = closest note f / detected f
+                    HEC_f_ratio = f_closest / HEC_f;
+                    if(HEC_f_ratio < 0.001) %fix zeros
+                        HEC_f_ratio = 1;
+                    end
                 end
             end
 %             if(i_rs > length(fC_tracker)) %allocate more space if needed
 %                 fC_tracker = [fC_tracker zeros(1,length(fC_tracker))];
 %                 note_tracker = [note_tracker zeros(1,length(note_tracker))];
 %             end
+            ynew_rsbuffer_diff(i_rs) = HEC_f_diff; %add new pitch shift adjustment to buffer
+            ynew_rsbuffer_ratio(i_rs) = HEC_f_ratio; %same but ratio instead of difference
             fC_tracker(i_rs) = HEC_f;
-            f_for_note_tracker = fetchnote_fastf(HEC_f,A4freq,C0); %closest note f
+            f_for_note_tracker = f_closest; %closest note f
             note_tracker(i_rs) = f_for_note_tracker;
             i_rs = i_rs + 1;
             %debug graphs
             if(debugHEgraphs)
-                EHC_plot_x = LminC_points_ext-1;
+                EHC_plot_x =(LminC_points_ext-1).*(xTimeUnits_modifier);
                 figure(HEdebugplots)
                 clf
                 subplot(2,4,1) %E(y)
-                  plot((0:length(EC)-1).*(xTimeUnits_modifier),EC,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
+                  plot(EHC_plot_x,EC,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
                   title("E")
                   axis tight
                   hold on
-                  plot(EHC_plot_x,EC(LminC_points_ext),'.-','MarkerSize',MarkerSizeNormal+1,'Color',[0.9,0,0]);
-                  plot((peakC-1)*E_pmult,EC(peakC),'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
+                  plot(peakC-1,EC(peakC),'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
                 subplot(2,4,2) %H(y)
-                  plot((0:length(HC)-1).*(xTimeUnits_modifier),HC,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
+                  plot(EHC_plot_x,HC,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
                   title("H")
                   axis tight
                   hold on
-                  plot(EHC_plot_x,HC(LminC_points_ext),'.-','MarkerSize',MarkerSizeNormal+1,'Color',[0.9,0,0]);
                   plot(peakC-1,HC(peakC),'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
                 subplot(2,4,3) %HEdiffs(y)
-                  plot((0:length(HC)-1).*(xTimeUnits_modifier),HECcompare,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
+                  plot(EHC_plot_x,HECcompare,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
                   title("E-2H")
                   axis tight
                   hold on
-                  plot(EHC_plot_x,HECcompare(LminC_points_ext),'.-','MarkerSize',MarkerSizeNormal+1,'Color',[0.9,0,0]);
                   plot(peakC-1,HECcompare(peakC),'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
                 subplot(2,4,5) %E(y_rs)
                   plot((0:lags-1).*(xTimeUnits_modifier),EC_rs,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
@@ -424,21 +451,19 @@ if(doHEcont) %H,E continuous
             set(gca,'YGrid','on')
          figure(FCplot)
     end
+    %pitch shifting
+    if(true) %graph the two pitch shifting buffers
+    PSplot = figure('Name','Pitch shifting EH');
+        subplot(2,1,1)
+        plot((0:length(ynew_rsbuffer_diff)-1).*resample_period.*(xTimeUnits_modifier),ynew_rsbuffer_diff,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
+        title("difference in f")
+        subplot(2,1,2)
+        plot((0:length(ynew_rsbuffer_ratio)-1).*resample_period.*(xTimeUnits_modifier),ynew_rsbuffer_ratio,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
+        title("ratios of f")
+    end
+    %samplerates for each section = ratios * original samplerate
+    ynew_samplerates_modified = ones(1,length(ynew_rsbuffer_ratio)) .* samplerate .* ynew_rsbuffer_ratio;
 end
-
-%Curve Fitting part, left unfinished
-% if(true)
-%   fittype = 'cubicinterp'; %what type of curve to fit
-%   Gfitplots = figure('Name','Curve fits');
-%       Gfit = fit(R_x',R',fittype);
-%       plot(Gfit,R_x,R);
-%       title("R(y) fit")
-%   GfitplotsD = figure('Name','Curve fits discrete');
-%     GfitY = feval(Gfit,0:110)';
-%     fprintf("R(y)CF:\n");
-%     handle_R(GfitY,lags,readfile,f,samplerate,resample_rate,0,1);
-%     plot(GfitY)
-% end
 
 %playing sounds through resampling
 [~, ~, target_f] = fetchnote(R_fQI); %find needed f
@@ -460,7 +485,7 @@ if(playsounds) %plays the sounds
     clear sound, clear sounds;
     y_toplay = [volpeakpoint y_tuned];
     fprintf("Playing y (pitch corrected w/ samplerate adjustment from R_fQI)...\n\n");
-    soundsc(y_toplay,(samplerate_tuned)) 
+    soundsc(y_toplay,(samplerate_tuned))
     %pause
 end
 %clear sound, clear sounds;
