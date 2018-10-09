@@ -18,7 +18,7 @@ clc, clear variables, clear sound, clear sounds, close all;
         filename = 'File.wav'; %must be MONO, no stereo
         frequency = C4; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
-            secondslength = 0.5; %number of seconds length to generate
+            secondslength = 0.1; %number of seconds length to generate
             pcount = 30; %number of periods to generate otherwise
     playsounds = false;
     volume = 10; %0-100 please
@@ -29,12 +29,7 @@ clc, clear variables, clear sound, clear sounds, close all;
     graphAnything = true; %graph... anything
         graphY = true; %graph y
         graphRy = true; %graph R(y)
-        %graphRyM = true; %graph R(y)M with specified lag
-        %graphCF = false; %graph curve fitting
-        %graphResample = false; %understand that LP filter is needed
         graphFFT = false; %graph FFT(y)
-        doHE = false; %compute the fixed 1:lags H & E part
-        graphHE = false; %graph H & E
         doHEcont = true; %compute H & E continuous
         graphHEcont = true; %graph H & E continuous
 %END CVARS
@@ -65,7 +60,13 @@ if(readfile == false)
     if(fixedlength)
         x = x(1:a); 
     end
-    y = square(2*pi*f.*x/samplerate + 2*pi*phase_samples/samplesperperiod); %make a wave y, ex: y = sin(w*x + O), w = 2*pi*f
+    %frequency modifier (modulator?)
+    fmod = [ones(1,length(x)/2) linspace(1,4,length(x)/2)]; %linear
+    %fmod_f = 20; %fmod oscillation f (Hz)
+    %fmod = 1 + 0.5*sin(2*pi*fmod_f.*x/samplerate); %oscillate sine (can implement vibrato)
+    [~, fmod_rs] = resampleY(fmod,upsample_rate,downsample_rate,false);
+    %input y
+    y = sin(2.*pi.*(f.*fmod).*x/samplerate + 2*pi*phase_samples/samplesperperiod); %make a wave y, ex: y = sin(w*x + O), w = 2*pi*f
     %base period is samplerate
     fprintf("Generated sample count = %d (%.3f seconds)\n",length(x),length(x)/samplerate);
 else
@@ -99,9 +100,6 @@ else
 end
 graphY = graphAnything && graphY;
 graphRy = graphAnything && graphRy;
-%graphRyM = graphAnything && graphRyM;
-% graphCF = graphAnything && graphCF;
-graphHE = graphAnything && graphHE;
 graphHEcont = graphAnything && graphHEcont;
 graphFFT = graphAnything && graphFFT;
 SubplotSize = 2;
@@ -196,30 +194,17 @@ if(graphRy && ~readfile)
 end
 figure(yplots) %bring to front
 
-%Curve Fitting part, left unfinished
-% if(true)
-%   fittype = 'cubicinterp'; %what type of curve to fit
-%   Gfitplots = figure('Name','Curve fits');
-%       Gfit = fit(R_x',R',fittype);
-%       plot(Gfit,R_x,R);
-%       title("R(y) fit")
-%   GfitplotsD = figure('Name','Curve fits discrete');
-%     GfitY = feval(Gfit,0:110)';
-%     fprintf("R(y)CF:\n");
-%     handle_R(GfitY,lags,readfile,f,samplerate,resample_rate,0,1);
-%     plot(GfitY)
-% end
-
 fprintf("Lags used: [0-%d]\n",lags-1);
 
 debugHEgraphs = false; %debug graphs
 if(debugHEgraphs)
     HEdebugplots = figure('Name','EH debug plots');
 end
+usetimesavers = false;%may change detection behavior, default off
 if(doHEcont) %H,E continuous
     %prepare arrays. fill with zeros to avoid checks in the loop
-    fC_tracker = zeros(1,length(y_rs)+1); %tracks detected frequency
-    note_tracker = zeros(1,length(y_rs)+1); %tracks closest note frequency
+    fC_tracker = zeros(1,length(y_rs)+0); %tracks detected frequency
+    note_tracker = zeros(1,length(y_rs)+0); %tracks closest note frequency
     error_tracker = zeros(1,5); %track errors without spamming console
     %to eliminate computation time
     E_pmult = 2;% * L (= 2L used)
@@ -250,55 +235,79 @@ if(doHEcont) %H,E continuous
     print_samplei = true; %show sample i=#
     tic; %time this process
     for i = 1:length(y) %big ol' for loop, realtime will use a while loop
-        %y_Lbuffer = [y_Lbuffer(2:end) y(i)];
-        y_smallbuffer = [y_smallbuffer(2:end) y(i)]; %faster
+        y_Lbuffer = [y_Lbuffer(2:end) y(i)];
+%         y_smallbuffer = [y_smallbuffer(2:end) y(i)]; %faster
+        %iterative E & H
+%         for a = 1:H_lag*RSP
+%             EHC_newterms = [y_Lbuffer(E_lag*RSP) y_Lbuffer(E_lag*RSP-a+1) y_Lbuffer(E_lag*RSP-2*a+1)];
+%             EC(a) = EC(a) + EHC_newterms(1).^2 - EHC_newterms(3).^2;
+%             HC(a) = HC(a) + EHC_newterms(1).*EHC_newterms(2) - EHC_newterms(2).*EHC_newterms(3);
+%         end
+        a = 1:H_lag*RSP;
+            EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(E_lag*RSP);
+            EHC_newterm2 = y_Lbuffer(E_lag*RSP-a+1);
+            EHC_newterm3 = y_Lbuffer(E_lag*RSP-2*a+1);
+            EC = EC + EHC_newterm1.^2 - EHC_newterm3.^2;
+            HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm2.*EHC_newterm3;
         if(mod(i,1*resample_period) == 0) %only check pitch every resampled point for now
             if(print_samplei) %only print in here too
-                fprintf(repmat(sprintf('\b'),1,strlength(s)));
+                if(~debugHEgraphs)
+                    fprintf(repmat(sprintf('\b'),1,strlength(s)));
+                end
                 s = "i = " + sprintf('%d',i);
                 fprintf("%s",s);
+                if(debugHEgraphs)
+                    fprintf("\n");
+                end
             end
-            y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer]; %do this in here
+%             y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer]; %do this in here
             y_Lbuffer_rs = [y_Lbuffer_rs(2:end) y_rs(i_rs)];
             %iterative equations from patent
-            EC_rs_newterm = y_Lbuffer_rs(E_lag).^2;
-            for a = 1:H_lag
-                EC_rs(a) = EC_rs(a) + EC_rs_newterm - y_Lbuffer_rs(E_lag-2*a+1).^2;
-                HC_rs(a) = HC_rs(a) + y_Lbuffer_rs(E_lag).*y_Lbuffer_rs(E_lag-a) - y_Lbuffer_rs(E_lag-a).*y_Lbuffer_rs(E_lag-2*a+1);
-            end
+%             for a = 1:H_lag
+%                 EHC_rs_newterms = [y_Lbuffer_rs(E_lag) y_Lbuffer_rs(E_lag-a+1) y_Lbuffer_rs(E_lag-2*a+1)];
+%                 EC_rs(a) = EC_rs(a) + EHC_rs_newterms(1).^2 - EHC_rs_newterms(3).^2;
+%                 HC_rs(a) = HC_rs(a) + EHC_rs_newterms(1).*EHC_rs_newterms(2) - EHC_rs_newterms(2).*EHC_rs_newterms(3);
+%             end
+            a = 1:H_lag;
+                EHC_rs_newterm1 = ones(1,H_lag) .* y_Lbuffer_rs(E_lag);
+                EHC_rs_newterm2 = y_Lbuffer_rs(E_lag-a+1);
+                EHC_rs_newterm3 = y_Lbuffer_rs(E_lag-2*a+1);
+                EC_rs(a) = EC_rs(a) + EHC_rs_newterm1.^2 - EHC_rs_newterm3.^2;
+                HC_rs(a) = HC_rs(a) + EHC_rs_newterm1.*EHC_rs_newterm2 - EHC_rs_newterm2.*EHC_rs_newterm3;
+            
             HECcompare_rs = EC_rs - 2.*HC_rs; %E - 2H
-            if(~all(HECcompare_rs >= 0)) %E >= 2H
+            if(~all(HECcompare_rs >= 0)) %E_rs >= 2H_rs?
                 error_tracker(1) = error_tracker(1) + 1; %E < 2H detected
                 %doesn't seem to matter
             end
             HECcompare_rs_epsilon = HECcompare_rs <= (epsilon * EC_rs);
             %make unqualifying points have high amplitude, excluding them from Lmin
-            HECcompare_rs_epsilon = (HECcompare_rs + max(HECcompare_rs)) .* HECcompare_rs_epsilon;
+            HECcompare_rs_epsilon = HECcompare_rs.*HECcompare_rs_epsilon + ((max(HECcompare_rs)+1) .* ~HECcompare_rs_epsilon);
             %Lmin
-            %[~, Lmin1C_rs_xarray] = findpeaks(-HECcompare_rs_epsilon(3:end)); %only check 2:lags
             [~, Lmin1C_rs_xarray] = findpeaks_fast(-HECcompare_rs_epsilon(3:end));
             Lmin1C_rs = Lmin1C_rs_xarray;
             if(isempty(Lmin1C_rs_xarray)) %No valley found for Lmin1C_rs. (bad)
                 error_tracker(2) = error_tracker(2) + 1;
-                Lmin1C_rs = length(HECcompare_rs_epsilon);
+                Lmin1C_rs = length(HECcompare_rs_epsilon); %use right bound
             else
-                Lmin1C_rs = Lmin1C_rs_xarray(1)-1+2; %first valley, add 2 offset from above
+                Lmin1C_rs = Lmin1C_rs_xarray(1)+2; %first valley, add 2 offset from above
             end
             if(isempty(HECcompare_rs_epsilon(Lmin1C_rs+1:end)))
                 Lmin2C_rs = Lmin1C_rs;
             else
                 %[~, Lmin2C_rs_xarray] = findpeaks(-HECcompare_rs_epsilon(Lmin1C_rs+1:end));
-                Lmin2C_rs_xarray = Lmin1C_rs_xarray(2:end)-Lmin1C_rs+2;
+                %Lmin2C_rs_xarray = Lmin1C_rs_xarray(2:end)-Lmin1C_rs+2;
+                Lmin2C_rs_xarray = Lmin1C_rs_xarray(2:end);
                 if(isempty(Lmin2C_rs_xarray)) %No valley found for Lmin2C_rs.
                     error_tracker(3) = error_tracker(3) + 1;
-                    Lmin2C_rs = Lmin1C_rs;
+                    Lmin2C_rs = Lmin1C_rs; %No Lmin2
                 else
-                    Lmin2C_rs = Lmin2C_rs_xarray(1)-1 + Lmin1C_rs(1); %2nd valley
+                    Lmin2C_rs = Lmin2C_rs_xarray(1) + 2; %2nd valley
                 end
             end 
             detectNewLmin = true;
             %don't do anything further if Lmin won't change
-            if(Lmin1C_rs == Lmin1C_rs_last && Lmin2C_rs == Lmin2C_rs_last)
+            if(usetimesavers && Lmin1C_rs == Lmin1C_rs_last && Lmin2C_rs == Lmin2C_rs_last)
                 detectNewLmin = false;
             end
             Lmin1C_rs_last = Lmin1C_rs;
@@ -306,28 +315,30 @@ if(doHEcont) %H,E continuous
             if(detectNewLmin) %transfer to non-resampled H & E
                 Lmin1C = (Lmin1C_rs)*resample_period;
                 Lmin2C = (Lmin2C_rs)*RSP;
-                EC = [calcE(y_Lbuffer,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcE(y_Lbuffer,Lmin2C+RSP,Lmin2C-RSP); %prob E too
-                HC = [calcH(y_Lbuffer,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcH(y_Lbuffer,Lmin2C+RSP,Lmin2C-RSP); %H coming out wrong cuz of lag stuff, fix
+%                 EC = [calcE(y_Lbuffer,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcE(y_Lbuffer,Lmin2C+RSP,Lmin2C-RSP); %prob E too
+%                 HC = [calcH(y_Lbuffer,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcH(y_Lbuffer,Lmin2C+RSP,Lmin2C-RSP); %H coming out wrong cuz of lag stuff, fix
                 HECcompare = EC - 2.*HC;
-                if(~all(HECcompare >= 0)) %E >= 2H
+                if(~all(HECcompare >= 0)) %E >= 2H?
                     error_tracker(4) = error_tracker(4) + 1;
+                    %also doesn't seem to matter
                 end
                 LminC = Lmin1C; %select final Lmin to use in H
                 %can give wrong harmonic? try comparing local minimums instead
-                %fix E, H comparison stuff first
-                if(Lmin1C_rs(1) < lags/2 && HECcompare(Lmin2C) < HECcompare(Lmin1C))
+                %check inequality signs
+                if(Lmin1C_rs < lags/2 && HECcompare(Lmin2C) < HECcompare(Lmin1C))
                     LminC = Lmin2C;
                 end
                 detectNewPitch = true;
-                if(LminC == LminC_last) %don't run Qinterp if the pitch didn't change
+                if(usetimesavers && LminC == LminC_last) %don't run Qinterp if the pitch didn't change
                     detectNewPitch = false;
                 end
                 LminC_last = LminC;
                 LminC_rs = LminC * resample_rate;
-                if(detectNewPitch) %detect pitch from peak near Lmin
-                    %16 point range around Lmin, can use 8 (+- 4) later?
+                if(detectNewPitch) %detect pitch from valley near Lmin
+                    %use large range of points around Lmin to find valley
+                    %later write function to find the valley using n points
                     LminC_points = (LminC+1)-resample_period/2+1:(LminC+1)+resample_period/2; %get range of 8 points
-                    LminC_points_ext = (LminC+1)-resample_period+1:(LminC+1)+resample_period; %range of 16 points
+                    LminC_points_ext = (LminC+1)-resample_period*2+1:(LminC+1)+resample_period*2; %range of 32 points
                     %try and stop any errors
                     LminC_points_ext(LminC_points_ext > length(HECcompare)-1) = length(HECcompare)-1;
                     %determine HE_f:
@@ -369,7 +380,13 @@ if(doHEcont) %H,E continuous
             i_rs = i_rs + 1;
             %debug graphs
             if(debugHEgraphs)
-                EHC_plot_x =(LminC_points_ext-1).*(xTimeUnits_modifier);
+                fprintf("detected f = %.2f Hz",HEC_f);
+                if(~readfile)
+                    fprintf(", real f = %.2f Hz",f.*fmod_rs(i_rs));
+                end
+                fprintf("\n")
+                %EHC_plot_x =(LminC_points_ext-1).*(xTimeUnits_modifier);
+                EHC_plot_x = 0:length(EC)-1;
                 figure(HEdebugplots)
                 clf
                 subplot(2,4,1) %E(y)
@@ -391,25 +408,25 @@ if(doHEcont) %H,E continuous
                   hold on
                   plot(peakC-1,HECcompare(peakC),'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
                 subplot(2,4,5) %E(y_rs)
-                  plot((0:lags-1).*(xTimeUnits_modifier),EC_rs,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
+                  plot((1:lags),EC_rs,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
                   title("E rs")
                   axis tight
                   hold on
                   plot([Lmin1C_rs Lmin2C_rs],[EC_rs(Lmin1C_rs) EC_rs(Lmin2C_rs)],'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
                 subplot(2,4,6) %H(y_rs)
-                  plot((0:lags-1).*(xTimeUnits_modifier),HC_rs,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
+                  plot((1:lags),HC_rs,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
                   title("H rs")
                   axis tight
                   hold on
                   plot([Lmin1C_rs Lmin2C_rs],[HC_rs(Lmin1C_rs) HC_rs(Lmin2C_rs)],'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
                 subplot(2,4,7) %HEdiffs(y_rs)
-                  plot((0:lags-1).*(xTimeUnits_modifier),HECcompare_rs,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
+                  plot((1:lags),HECcompare_rs,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
                   title("E-2H rs")
                   axis tight
                   hold on
                   plot([Lmin1C_rs Lmin2C_rs],[HECcompare_rs(Lmin1C_rs) HECcompare_rs(Lmin2C_rs)],'*','MarkerSize',MarkerSizeBig,'Color',[0.9,0,0]);
                 subplot(2,4,8) %HEdiffs_epsilon(y_rs)
-                  plot((0:lags-1).*(xTimeUnits_modifier),HECcompare_rs_epsilon,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
+                  plot((1:lags),HECcompare_rs_epsilon,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(3,:));
                   title("E-2H<=eE rs")
                   axis tight
                   hold on
@@ -425,11 +442,11 @@ if(doHEcont) %H,E continuous
     if(graphHEcont)
         FCplot = figure('Name','EH continuous f');
             set(FCplot,'Position', [screencenter(1)-gs(1)/2 screencenter(2)-gs(2)/2+100 gs(1)*2 gs(2)]);
-            plot((0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier),fC_tracker,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
-            hold on
             if(~readfile)
-                plot((0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier),ones(1,length(fC_tracker)).*f,'LineWidth',2,'Color',[0.5,0,0]);
+                plot((0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier),ones(1,length(fC_tracker)).*f.*fmod_rs,'LineWidth',2,'Color',[0.5,0,0]);
             end
+            hold on
+            plot((0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier),fC_tracker,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
             title("f detected")
             axis tight
         Noteplot = figure('Name','EH continuous notes');
@@ -454,11 +471,16 @@ if(doHEcont) %H,E continuous
     %pitch shifting
     if(true) %graph the two pitch shifting buffers
     PSplot = figure('Name','Pitch shifting EH');
+        PSplot_x = (0:length(ynew_rsbuffer_ratio)-1).*resample_period.*(xTimeUnits_modifier);
         subplot(2,1,1)
-        plot((0:length(ynew_rsbuffer_diff)-1).*resample_period.*(xTimeUnits_modifier),ynew_rsbuffer_diff,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
-        title("difference in f")
+        plot(PSplot_x,zeros(1,length(ynew_rsbuffer_diff)),'LineWidth',1,'Color',[0.5,0.5,0.5]);
+        hold on
+        plot(PSplot_x,log(ynew_rsbuffer_ratio)/log(2)*1200,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
+        title("difference in cents")
         subplot(2,1,2)
-        plot((0:length(ynew_rsbuffer_ratio)-1).*resample_period.*(xTimeUnits_modifier),ynew_rsbuffer_ratio,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
+        plot(PSplot_x,ones(1,length(ynew_rsbuffer_diff)),'LineWidth',1,'Color',[0.5,0.5,0.5]);
+        hold on
+        plot(PSplot_x,ynew_rsbuffer_ratio,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
         title("ratios of f")
     end
     %samplerates for each section = ratios * original samplerate
@@ -650,17 +672,17 @@ function H = calcH(y,lags,minlag)
     y = [y zeros(1,lags+2)]; %zero padding to stop array index errors
     H = zeros(1,lags); %set up with zeros
     %shifts left instead of right, but may be ok?
-    for c = minlag_set:length(H) %check this later
-        %m = y_i * y_i-L = y(t) * y(t+c)
-        m = y .* [y(c:end) zeros(1,c-1)]; %y * y shifted left by L
-        H(c) = sum(m(1:c)); %only sum c points, not all points
-    end
-    
-%     for c = minlag_set:length(H)
+%     for c = minlag_set:length(H) %check this later
 %         %m = y_i * y_i-L = y(t) * y(t+c)
-%         m = y .* [zeros(1,c-1) y(1:end-c+1)]; %y * y shifted right by L
+%         m = y .* [y(c:end) zeros(1,c-1)]; %y * y shifted left by L
 %         H(c) = sum(m(1:c)); %only sum c points, not all points
 %     end
+    
+    for c = minlag_set:length(H)
+        %m = y_i * y_i-L = y(t) * y(t+c)
+        m = y .* [zeros(1,c-1) y(1:end-c+1)]; %y * y shifted right by L
+        H(c) = sum(m(1:c)); %only sum c points, not all points
+    end
 end
 
 function [pks,locs] = findpeaks_fast(y)
