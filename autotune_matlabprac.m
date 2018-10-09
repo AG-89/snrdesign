@@ -15,8 +15,8 @@ clc, clear variables, clear sound, clear sounds, close all;
     lags = 110; %upper limit to range of lags used, (1 to 'lags')
     epsilon = 0.4; %arbitrary small value
     readfile = false; %read file or generate wave
-        filename = 'File.wav'; %must be MONO, no stereo
-        frequency = C4; %f to generate (Hz)
+        filename = 'File.wav'; %stereo files converted to mono
+        frequency = 100; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
             secondslength = 0.1; %number of seconds length to generate
             pcount = 30; %number of periods to generate otherwise
@@ -61,7 +61,7 @@ if(readfile == false)
         x = x(1:a); 
     end
     %frequency modifier (modulator?)
-    fmod = [ones(1,length(x)/2) linspace(1,4,length(x)/2)]; %linear
+    fmod = [ones(1,floor(length(x)/4)) linspace(1,8,length(x)-floor(length(x)/4))]; %linear
     %fmod_f = 20; %fmod oscillation f (Hz)
     %fmod = 1 + 0.5*sin(2*pi*fmod_f.*x/samplerate); %oscillate sine (can implement vibrato)
     [~, fmod_rs] = resampleY(fmod,upsample_rate,downsample_rate,false);
@@ -71,6 +71,9 @@ if(readfile == false)
     fprintf("Generated sample count = %d (%.3f seconds)\n",length(x),length(x)/samplerate);
 else
     [y,SR_file] = audioread(filename); %import y as file, SR_file samplerate
+    if(size(y,2) > 1)%multichannel file file
+        y = sum(y,2);
+    end
     x = 1:length(y); %x = X samples to match y sample count
     f = 0;
     samplesperperiod = length(x);
@@ -210,8 +213,8 @@ if(doHEcont) %H,E continuous
     E_pmult = 2;% * L (= 2L used)
     E_lag = lags*E_pmult; %2L
     H_lag = lags; %L
-    y_Lbuffer = zeros(1,E_lag*resample_period); %holds some y data
-    y_Lbuffer_rs = zeros(1,E_lag);
+    y_Lbuffer = zeros(1,E_lag*resample_period+RSP); %holds some y data
+    y_Lbuffer_rs = zeros(1,E_lag+1+1);
     ynew_rsbuffer_diff = zeros(1,length(y_Lbuffer_rs)); %holds pitch shifting diffs
     ynew_rsbuffer_ratio = zeros(1,length(y_Lbuffer_rs)); %holds pitch shifting ratios
     y_smallbuffer = zeros(1,resample_period);
@@ -243,12 +246,19 @@ if(doHEcont) %H,E continuous
 %             EC(a) = EC(a) + EHC_newterms(1).^2 - EHC_newterms(3).^2;
 %             HC(a) = HC(a) + EHC_newterms(1).*EHC_newterms(2) - EHC_newterms(2).*EHC_newterms(3);
 %         end
-        a = 1:H_lag*RSP;
-            EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(E_lag*RSP);
-            EHC_newterm2 = y_Lbuffer(E_lag*RSP-a+1);
-            EHC_newterm3 = y_Lbuffer(E_lag*RSP-2*a+1);
+%         a = 1:H_lag*RSP;
+%             EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(end);
+%             EHC_newterm2 = y_Lbuffer(E_lag*RSP-a+1);
+%             EHC_newterm3 = y_Lbuffer(E_lag*RSP-2*a+1);
+%             EC = EC + EHC_newterm1.^2 - EHC_newterm3.^2;
+%             HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm2.*EHC_newterm3;
+          a = 1:H_lag*RSP; %testing new terms
+            EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(end);
+            EHC_newterm2 = y_Lbuffer(end-a);
+            EHC_newterm3 = y_Lbuffer(end-2*a-1);
+            EHC_newterm4 = y_Lbuffer(end-a-1);
             EC = EC + EHC_newterm1.^2 - EHC_newterm3.^2;
-            HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm2.*EHC_newterm3;
+            HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm4.*EHC_newterm3;
         if(mod(i,1*resample_period) == 0) %only check pitch every resampled point for now
             if(print_samplei) %only print in here too
                 if(~debugHEgraphs)
@@ -268,13 +278,19 @@ if(doHEcont) %H,E continuous
 %                 EC_rs(a) = EC_rs(a) + EHC_rs_newterms(1).^2 - EHC_rs_newterms(3).^2;
 %                 HC_rs(a) = HC_rs(a) + EHC_rs_newterms(1).*EHC_rs_newterms(2) - EHC_rs_newterms(2).*EHC_rs_newterms(3);
 %             end
-            a = 1:H_lag;
-                EHC_rs_newterm1 = ones(1,H_lag) .* y_Lbuffer_rs(E_lag);
-                EHC_rs_newterm2 = y_Lbuffer_rs(E_lag-a+1);
-                EHC_rs_newterm3 = y_Lbuffer_rs(E_lag-2*a+1);
-                EC_rs(a) = EC_rs(a) + EHC_rs_newterm1.^2 - EHC_rs_newterm3.^2;
-                HC_rs(a) = HC_rs(a) + EHC_rs_newterm1.*EHC_rs_newterm2 - EHC_rs_newterm2.*EHC_rs_newterm3;
-            
+%             a = 1:H_lag;
+%                 EHC_rs_newterm1 = ones(1,H_lag) .* y_Lbuffer_rs(E_lag);
+%                 EHC_rs_newterm2 = y_Lbuffer_rs(E_lag-a+1);
+%                 EHC_rs_newterm3 = y_Lbuffer_rs(E_lag-2*a+1);
+%                 EC_rs(a) = EC_rs(a) + EHC_rs_newterm1.^2 - EHC_rs_newterm3.^2;
+%                 HC_rs(a) = HC_rs(a) + EHC_rs_newterm1.*EHC_rs_newterm2 - EHC_rs_newterm2.*EHC_rs_newterm3;
+              a = 1:H_lag; %testing new terms
+                EHC_rs_newterm1 = ones(1,H_lag) .* y_Lbuffer_rs(end);
+                EHC_rs_newterm2 = y_Lbuffer_rs(end-a);
+                EHC_rs_newterm3 = y_Lbuffer_rs(end-2*a-1);
+                EHC_rs_newterm4 = y_Lbuffer_rs(end-a-1);
+                EC_rs = EC_rs + EHC_rs_newterm1.^2 - EHC_rs_newterm3.^2;
+                HC_rs = HC_rs + EHC_rs_newterm1.*EHC_rs_newterm2 - EHC_rs_newterm4.*EHC_rs_newterm3;
             HECcompare_rs = EC_rs - 2.*HC_rs; %E - 2H
             if(~all(HECcompare_rs >= 0)) %E_rs >= 2H_rs?
                 error_tracker(1) = error_tracker(1) + 1; %E < 2H detected
@@ -318,6 +334,9 @@ if(doHEcont) %H,E continuous
 %                 EC = [calcE(y_Lbuffer,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcE(y_Lbuffer,Lmin2C+RSP,Lmin2C-RSP); %prob E too
 %                 HC = [calcH(y_Lbuffer,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcH(y_Lbuffer,Lmin2C+RSP,Lmin2C-RSP); %H coming out wrong cuz of lag stuff, fix
                 HECcompare = EC - 2.*HC;
+                if(~isrow(HECcompare)) %to row vector
+                    HECcompare = HECcompare';
+                end
                 if(~all(HECcompare >= 0)) %E >= 2H?
                     error_tracker(4) = error_tracker(4) + 1;
                     %also doesn't seem to matter
@@ -325,34 +344,52 @@ if(doHEcont) %H,E continuous
                 LminC = Lmin1C; %select final Lmin to use in H
                 %can give wrong harmonic? try comparing local minimums instead
                 %check inequality signs
-                if(Lmin1C_rs < lags/2 && HECcompare(Lmin2C) < HECcompare(Lmin1C))
-                    LminC = Lmin2C;
-                end
+                 if(Lmin1C_rs < lags/2 && HECcompare(Lmin2C) < HECcompare(Lmin1C))
+                     LminC = Lmin2C;
+                 end
                 detectNewPitch = true;
                 if(usetimesavers && LminC == LminC_last) %don't run Qinterp if the pitch didn't change
                     detectNewPitch = false;
                 end
-                LminC_last = LminC;
-                LminC_rs = LminC * resample_rate;
                 if(detectNewPitch) %detect pitch from valley near Lmin
                     %use large range of points around Lmin to find valley
                     %later write function to find the valley using n points
-                    LminC_points = (LminC+1)-resample_period/2+1:(LminC+1)+resample_period/2; %get range of 8 points
-                    LminC_points_ext = (LminC+1)-resample_period*2+1:(LminC+1)+resample_period*2; %range of 32 points
-                    %try and stop any errors
-                    LminC_points_ext(LminC_points_ext > length(HECcompare)-1) = length(HECcompare)-1;
-                    %determine HE_f:
-                    [~, peakC] = findpeaks_fast(-HECcompare(LminC_points_ext));
-                    if(isempty(peakC)) %no valley found for LminC
-                        error_tracker(5) = error_tracker(5) + 1;
-                        peakC = LminC_points_ext(end)-1; %-1 to stop indexing errors
-                    else
-                        peakC = LminC_points_ext(peakC(1));
+                    for k = 0:1 %do for Lmin 1 & 2 and then compare
+                        if(k == 0)%1 & 2 part
+                            LminC = Lmin2C;
+                        else
+                            LminC = Lmin1C;
+                        end
+                        LminC_points = (LminC+1)-resample_period/2+1:(LminC+1)+resample_period/2; %get range of 8 points
+                        LminC_points_ext = (LminC+1)-resample_period*2+1:(LminC+1)+resample_period*2; %range of 32 points
+                        %try and stop any errors
+                        LminC_points_ext(LminC_points_ext > length(HECcompare)-1) = length(HECcompare)-1;
+                        %determine HE_f:
+                        [~, peakC] = findpeaks_fast(-HECcompare(LminC_points_ext));
+                        if(isempty(peakC)) %no valley found for LminC
+                            error_tracker(5) = error_tracker(5) + 1;
+                            peakC = LminC_points_ext(end)-1; %-1 to stop indexing errors
+                        else
+                            peakC = LminC_points_ext(peakC(1));
+                        end
+                        peaknfriendsC = [peakC-1,peakC,peakC+1]; %array of 3 points
+                        if(k == 0)%1 & 2 part
+                            peakC2 = peakC;
+                            peaknfriendsC2 = peaknfriendsC;
+                        else
+                            peakC1 = peakC;
+                            peaknfriendsC1 = peaknfriendsC;
+                        end
                     end
-                    peaknfriendsC = [peakC-1,peakC,peakC+1]; %array of 3 points
-                    if(~isrow(HECcompare)) %to row vector
-                        HECcompare = HECcompare';
+                    %now set the real Lmin and use its valley
+                    if(Lmin1C_rs < lags/2 && HECcompare(peakC2) < HECcompare(peakC1))
+                        %use Lmin2 stuff if its valley is lower
+                         LminC = Lmin2C;
+                         peakC = peakC2;
+                         peaknfriendsC = peaknfriendsC2;
                     end
+                    LminC_last = LminC;
+                    LminC_rs = LminC * resample_rate;
                     %shift left with -1 to get samples per period (from QI x):
                     HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-1; %QI
                     HEC_p = HEC_spp/samplerate;
