@@ -15,7 +15,7 @@ clc, clear variables, clear sound, clear sounds, close all;
     lags = 110; %upper limit to range of lags used, (2 to 'lags')
     epsilon = 0.4; %arbitrary small value
     readfile = false; %read file or generate wave
-        filename = 'File.wav'; %stereo files converted to mono
+        filename = 'aaa.wav'; %stereo files converted to mono
         frequency = C4*1; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
             secondslength = 0.1; %number of seconds length to generate
@@ -32,6 +32,8 @@ clc, clear variables, clear sound, clear sounds, close all;
         graphFFT = false; %graph FFT(y)
         doHEcont = true; %compute H & E continuous
         graphHEcont = true; %graph H & E continuous
+    debugHEgraphs = false; %HE debug mode
+        debug_starti = 0; %sample to start debug graphing at
 %END CVARS
 
 %% Generate wave
@@ -61,11 +63,24 @@ if(readfile == false)
     if(fixedlength)
         x = x(1:a); 
     end
-    %frequency modifier (modulator?)
-    fmod = [ones(1,floor(length(x)/2)) linspace(1,2,floor(length(x)/2))]; %linear
-    %fmod_f = 20; %fmod oscillation f (Hz)
-    %fmod = 1 + 0.5*sin(2*pi*fmod_f.*x/samplerate); %oscillate sine (can implement vibrato)
-    [~, fmod_rs] = resampleY(fmod,upsample_rate,downsample_rate,false);
+    %frequency modifier (modulator?):
+    %constant
+        fmod_constant = ones(1,length(x));
+    %constant f then ramp
+        fmod_constthenramp_constratio = 1/4;
+        fmod_constthenramp = [ones(1,floor(length(x).*fmod_constthenramp_constratio)) linspace(1,2,floor(length(x).*(1-fmod_constthenramp_constratio)))];
+    %stair steps
+        fmod_stairstep_size = floor(length(x)/12);
+        a = linspace(1,2,floor(length(x)/(fmod_stairstep_size)));
+        b = [repmat(a,fmod_stairstep_size,1)];
+        fmod_stairsteps = b(:)';
+    %oscillator
+        fmod_f = 20; %Hz
+        fmod_osc = 1 + 0.5*sin(2*pi*fmod_f.*x/samplerate); %oscillate sine (can vibrato)
+    %select which fmod
+    fmod = fmod_constthenramp;
+    fmod = [fmod ones(1,length(x)-length(fmod)).*fmod(end)]; %try to ensure same length
+    [~, fmod_rs] = resampleY(fmod,upsample_rate,downsample_rate,false); %get rs fmod for graph
     %input y
     y = sin(2.*pi.*(f.*fmod).*x/samplerate + 2*pi*phase_samples/samplesperperiod); %make a wave y, ex: y = sin(w*x + O), w = 2*pi*f
     %base period is samplerate
@@ -202,7 +217,7 @@ figure(yplots) %bring to front
 fprintf("Lags used: [0-%d]\n",lags-1);
 
 %% Continuous Pitch Detection w/ E & H
-debugHEgraphs = false; %debug graphs
+%debug control moved to top
 if(debugHEgraphs)
     HEdebugplots = figure('Name','EH debug plots');
 end
@@ -259,17 +274,21 @@ if(doHEcont) %H,E continuous
 %             HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm2.*EHC_newterm3;
           a = 1:H_lag*RSP; %testing new terms
             EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(end);
-            EHC_newterm2 = y_Lbuffer(end-floor(E_pmult.*a./2));
-            EHC_newterm3 = y_Lbuffer(end-E_pmult*a-0);
-            EHC_newterm4 = y_Lbuffer(end-floor(E_pmult.*a./2)-0);
+            EHC_newterm2 = y_Lbuffer(end-a-0);
+            EHC_newterm3 = y_Lbuffer(end-2*a);
+            EHC_newterm4 = y_Lbuffer(end-a-0);
             EC = EC + EHC_newterm1.^2 - EHC_newterm3.^2;
             HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm4.*EHC_newterm3;
         if(mod(i,1*resample_period) == 0) %only check pitch every resampled point for now
+            
+            %can put breakpoint on this for debug
+            '';
+            
             if(print_samplei) %only print in here too
                 if(~debugHEgraphs)
                     fprintf(repmat(sprintf('\b'),1,strlength(s)));
                 end
-                s = "i = " + sprintf('%d',i);
+                s = sprintf("i = %d (%.2f ms)",i,i/samplerate*1000);
                 fprintf("%s",s);
                 if(debugHEgraphs)
                     fprintf("\n");
@@ -291,9 +310,9 @@ if(doHEcont) %H,E continuous
 %                 HC_rs(a) = HC_rs(a) + EHC_rs_newterm1.*EHC_rs_newterm2 - EHC_rs_newterm2.*EHC_rs_newterm3;
               a = 1:H_lag; %testing new terms
                 EHC_rs_newterm1 = ones(1,H_lag) .* y_Lbuffer_rs(end);
-                EHC_rs_newterm2 = y_Lbuffer_rs(end-floor(E_pmult.*a./2));
-                EHC_rs_newterm3 = y_Lbuffer_rs(end-E_pmult*a-0);
-                EHC_rs_newterm4 = y_Lbuffer_rs(end-floor(E_pmult.*a./2)-0);
+                EHC_rs_newterm2 = y_Lbuffer_rs(end-a-0);
+                EHC_rs_newterm3 = y_Lbuffer_rs(end-2*a);
+                EHC_rs_newterm4 = y_Lbuffer_rs(end-a-0);
                 EC_rs = EC_rs + EHC_rs_newterm1.^2 - EHC_rs_newterm3.^2;
                 HC_rs = HC_rs + EHC_rs_newterm1.*EHC_rs_newterm2 - EHC_rs_newterm4.*EHC_rs_newterm3;
             HECcompare_rs = EC_rs - E_pmult.*HC_rs; %E - 2H
@@ -338,11 +357,12 @@ if(doHEcont) %H,E continuous
                 Lmin1C = (Lmin1C_rs)*resample_period;
                 Lmin2C = (Lmin2C_rs)*RSP;
                 %below equations give different results from iteratives
-                %EHC_Lbuffer_input = y_Lbuffer(end-(E_lag*RSP-1):end);
+                EHC_Lbuffer_input = y_Lbuffer(end-(E_lag*RSP-1):end);
                  %EC = [calcE(EHC_Lbuffer_input,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcE(EHC_Lbuffer_input,Lmin2C+RSP,Lmin2C-RSP);
                  %HC = [calcH(EHC_Lbuffer_input,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcH(EHC_Lbuffer_input,Lmin2C+RSP,Lmin2C-RSP);
                  %EC = calcE(EHC_Lbuffer_input,lags*RSP,0);
                  %HC = calcH(EHC_Lbuffer_input,lags*RSP,0);
+                 %HC = autoc(EHC_Lbuffer_input,lags*RSP,0);
                 HECcompare = EC - E_pmult.*HC;
                 if(~isrow(HECcompare)) %to row vector
                     HECcompare = HECcompare';
@@ -370,8 +390,8 @@ if(doHEcont) %H,E continuous
                         else
                             LminC = Lmin1C;
                         end
-                        LminC_points = (LminC+1)-resample_period/2+1:(LminC+1)+resample_period/2; %get range of 8 points
-                        LminC_points_ext = (LminC+1)-resample_period*2+1:(LminC+1)+resample_period*2; %range of 32 points
+                        LminC_points = (LminC)-RSP/2+1:(LminC)+RSP/2; %get range of 8 points
+                        LminC_points_ext = (LminC)-RSP*2+1:(LminC)+RSP*2; %range of 32 points
                         %try and stop any errors
                         LminC_points_ext(LminC_points_ext > length(HECcompare)-1) = length(HECcompare)-1;
                         %determine HE_f:
@@ -381,7 +401,7 @@ if(doHEcont) %H,E continuous
                             %peakC = LminC_points_ext(end)-1; %-1 to stop indexing errors
                             peakC = peakC_last;
                         else
-                            peakC = LminC_points_ext(peakC(1));
+                            peakC = LminC_points_ext(peakC(1)); %no shift -1 needed
                         end
                         peaknfriendsC = [peakC-1,peakC,peakC+1]; %array of 3 points
                         if(k == 0)%1 & 2 part
@@ -401,15 +421,16 @@ if(doHEcont) %H,E continuous
                          peakC = peakC2;
                          peaknfriendsC = peaknfriendsC2;
                     end
-                    if(peakC )
-                         LminC = Lmin2C;
-                         peakC = peakC2;
-                         peaknfriendsC = peaknfriendsC2;
-                    end
+                    %use first valley (higher f) if both are close
+%                     if(abs(HECcompare(peakC2) - HECcompare(peakC1)) < 1)
+%                         LminC = Lmin1C;
+%                          peakC = peakC1;
+%                          peaknfriendsC = peaknfriendsC1;
+%                     end
                     LminC_last = LminC;
                     LminC_rs = LminC * resample_rate;
-                    %shift left with -1 to get samples per period (from QI x):
-                    HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-1; %QI
+                    %no shift left -1 needed due to above peakC indexing
+                    HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-0; %QI
                     HEC_p = HEC_spp/samplerate;
                     HEC_f = samplerate/(HEC_spp); %detected f
                     f_closest = fetchnote_fastf(HEC_f,C0);
@@ -434,7 +455,7 @@ if(doHEcont) %H,E continuous
             note_tracker(i_rs) = f_for_note_tracker;
             i_rs = i_rs + 1;
             %debug graphs
-            if(debugHEgraphs)
+            if(debugHEgraphs && i >= debug_starti)
                 fprintf("detected f = %.2f Hz",HEC_f);
                 if(~readfile)
                     fprintf(", real f = %.2f Hz",f.*fmod_rs(i_rs));
@@ -531,10 +552,14 @@ if(doHEcont) %H,E continuous
              fC_tracker_error_cents_mod =  fC_tracker_error_cents_mod - (fC_tracker_error_cents_mod > 600).*1200;
              FCplot_error = figure('Name','EH continuous f error');
              subplot(3,1,1)
+                plot(HEcont_plot_x,zeros(1,length(HEcont_plot_x)),'LineWidth',1,'Color',[0.5,0.5,0.5]);
+                hold on
                 plot(HEcont_plot_x,fC_tracker_error,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
                 title("f error in Hz")
                 axis tight
              subplot(3,1,2)
+                 plot(HEcont_plot_x,zeros(1,length(HEcont_plot_x)),'LineWidth',1,'Color',[0.5,0.5,0.5]);
+                hold on
                 plot(HEcont_plot_x,fC_tracker_error_cents,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
                 title("f error in cents")
                 axis tight
@@ -645,8 +670,8 @@ function [x, R, fR, fR_QI] = handle_R(y,lags,readfile,f,samplerate,resample_rate
         if(~isrow(locs)) %to row vector
             locs = locs';
         end
-        locs = locs-1;%shift left cuz matlab
-        meanp = mean(diff([0 locs])); %find the mean period, fixed calculation
+        %locs = locs;%shift left cuz matlab
+        meanp = mean(diff([1 locs])); %find the mean period, fixed calculation
         peaks_str = strtrim(sprintf('%d ', locs));
         if(length(peaks_str) > 30) %truncate if too long
             peaks_str = peaks_str(1:30) + " ...";
@@ -659,9 +684,8 @@ function [x, R, fR, fR_QI] = handle_R(y,lags,readfile,f,samplerate,resample_rate
         if(~isrow(R)) %to row vector
             R = R';
         end
-        %locs was shifted left, shift right with +1 to reverse:
-        xweneed = QInterp_peak(peaknfriends,R(peaknfriends+1)); %get float x
-        fR_QI = samplerate/(xweneed)*resample_rate; %QI detected f
+        xweneed = QInterp_peak(peaknfriends,R(peaknfriends)); %QI
+        fR_QI = samplerate/(xweneed-1)*resample_rate; %QI detected f
         fprintf('AVG Peak p detected pitch: R_f = ') %print out f results
         report_ptof(fR,readfile,f)
         fprintf('Q. interpolated p detected pitch: R_fQI = ')
