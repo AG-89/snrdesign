@@ -1,5 +1,4 @@
-%snr design autotune practice
-%Team: Ashlin G, Alex G, Brandon Y
+%snr design autotune practice%Team: Ashlin G, Alex G, Brandon Y
 clc, clear variables, clear sound, clear sounds, close all;
 
 %% CONTROL VARIABLES
@@ -128,7 +127,7 @@ screensize = get(groot, 'ScreenSize'); screensize = [screensize(3) screensize(4)
 screencenter = screensize./2;
 ylimits = [-1.2 1.2];
 graphsize = [560 420]; %size of figure windows
-graphcolors = [[0 0.2 0.6]; [0.4 0.4 0]; [0 0.6 0.2]]; %some colors
+graphcolors = [[0 0.2 0.6]; [0.4 0.4 0]; [0 0.6 0.2]; [0.7 0.2 0.0]]; %some colors
 MarkerSizeTiny = 2;
 MarkerSizeSmall = 4;
 MarkerSizeNormal = 6;
@@ -163,10 +162,7 @@ if(graphY)
     subplot(SubplotSize,1,SubplotSize) %w/ filter
         plot(x_rs.*(xTimeUnits_modifier),y_rs,'.-.','MarkerSize',MarkerSizeSmall,'Color',graphcolors(3,:))
         xlim([0 xlim_x_rs])
-        if(playsounds)
-            soundedStr = "(sounded 2nd) ";
-        end
-        title("y rs " + soundedStr + resample_rate_s)
+        title("y rs " + resample_rate_s)
         ylim(ylimits)
 end
 y_fft = abs(fft(y)/length(y)); %fft(y)
@@ -588,19 +584,45 @@ if(doHEcont) %H,E continuous
     end
     %samplerates for each section = ratios * original samplerate
     ynew_samplerates_modified = ones(1,length(ynew_rsbuffer_ratio)) .* samplerate .* ynew_rsbuffer_ratio;
+    %y to be retuned
+    y_retunedHE = y;
+    %make sure size of y is evenly divisible by resampling period
+    if(length(y_retunedHE)/RSP < length(ynew_rsbuffer_ratio))
+        %y_retunedHE = [y_retunedHE zeros(1,RSP-mod(length(y_retunedHE),RSP))]
+        y_retunedHE = [y_retunedHE zeros(1,RSP)]; %just pad some zeros
+    end
+    %for loop at the end for fixed-time
+    for a = 1:length(ynew_rsbuffer_ratio)
+        retune_RSP_range = 1+RSP*(a-1):RSP+RSP*(a-1); %RSP# point ranges
+        [num, denom] = rat(ynew_rsbuffer_ratio(a)); %matlab's rational approximator
+        %use pitch shift function for each set of points
+        y_retunedHE(retune_RSP_range) = pitch_shift_8pt(y(retune_RSP_range),num,denom);
+    end
+    %graph
+    Retunedplot = figure('Name','Retuned waveform (HE)');
+        if(playsounds)
+            soundedStr = "(sounded 2nd) ";
+        end
+      subplot(1,1,1)
+        plot(x.*(xTimeUnits_modifier),y_retunedHE,'.-','MarkerSize',MarkerSizeTiny,'Color',graphcolors(4,:));
+        xlim([0 xlim_x])
+        title("y retuned" + soundedStr)
+        ylim(ylimits)
 end
 
 %% playback pitch shifted wave
 %playing sounds through resampling
-[~, ~, target_f] = fetchnote(R_fQI); %find needed f
-samplerate_tuned_ratio = target_f/R_fQI; %ratio between needed/found f
-samplerate_tuned = round(samplerate * samplerate_tuned_ratio); %new S.R.
-%higher SR = higher pitch, lower SR = lower pitch
-y_tuned = y; %with diff samplerates, wave will be the same
+% [~, ~, target_f] = fetchnote(R_fQI); %find needed f
+% samplerate_tuned_ratio = target_f/R_fQI; %ratio between needed/found f
+% samplerate_tuned = round(samplerate * samplerate_tuned_ratio); %new S.R.
+% %higher SR = higher pitch, lower SR = lower pitch
+% y_retuned = y; %with diff samplerates, wave will be the same
 
 %uncomment these if you are using your own pitch-shifted wave
-%y_tuned = YOUR_WAVE_TO_PLAY; %put wave here
-%samplerate_tuned = samplerate; %restore samplerate
+y_retuned = y_retunedHE; %put wave here
+samplerate_tuned = samplerate; %restore samplerate
+
+%if we save y_retuned we can run pitch detection on it too.
 
 if(playsounds) %plays the sounds
     volpeakpoint = 100/volume;
@@ -609,8 +631,8 @@ if(playsounds) %plays the sounds
     soundsc(y_toplay,(samplerate))
     pause
     clear sound, clear sounds;
-    y_toplay = [volpeakpoint y_tuned];
-    fprintf("Playing y (pitch corrected w/ samplerate adjustment from R_fQI)...\n\n");
+    y_toplay = [volpeakpoint y_retuned];
+    fprintf("Playing y (pitch corrected thru continuous HE method)...\n\n");
     soundsc(y_toplay,(samplerate_tuned))
     %pause
 end
@@ -874,6 +896,27 @@ function fetchnote_print(x)
 %print out fetchnote information
     [n, e, f] = fetchnote(x);
     fprintf("Closest note = %s (%.2f Hz) Error (cents) = %+.1f\n",n,f,e);
+end
+
+function y_new = pitch_shift_ratio(y,num,denom)
+%pitch shifts a data set by a f ratio n/d
+%n & d will usually be around 3-4 digits (base 10)
+    y_new = y; %init
+    %do the things in here
+    
+    
+    %make sure y_new is set as output
+    
+    %y_new should be the same # of points as y
+    if(length(y_new) ~= length(y))
+        printf("PS length changed. bad.");
+    end
+end
+
+function y_new = pitch_shift_8pt(y,num,denom)
+%pitch shifts 8 points by a f ratio n/d
+%this will be the same function as the above for now
+    y_new = pitch_shift_ratio(y,num,denom);
 end
 
 %for MATLAB; ignore some warnings
