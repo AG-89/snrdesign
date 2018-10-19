@@ -8,6 +8,7 @@ y_new = linear_interp(y,2);
 hold on
 plot(x,y_new,'.-','MarkerSize',20)
 
+%not finished yet
 function y_out = linear_interp(y,ratio)
     x = 1:length(y);
     x_adjusted = x.*ratio
