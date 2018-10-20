@@ -7,6 +7,8 @@ clc, clear variables, clear sound, clear sounds, close all;
     global A4freq; A4freq = 440; %Freq (Hz) for note A4
     C4 = A4freq * 2^(-9/12); %middle c (C4) from A4
     C0 = 2^(-(9+12*4)/12)*A4freq; %C0
+    %scales = 12edo; tbd: just5. Listing before graph y section
+    scale_name = '12edo';
 
     %control
     downsample_rate = 8; %down/up sample by these factors, new pitch = f * d/u
@@ -14,10 +16,10 @@ clc, clear variables, clear sound, clear sounds, close all;
     lags = 110; %upper limit to range of lags used, (2 to 'lags')
     epsilon = 0.4; %arbitrary small value
     readfile = false; %read file or generate wave
-        filename = 'aaa.wav'; %stereo files converted to mono
+        filename = 'test.wav'; %stereo files converted to mono
         frequency = C4*1; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
-            secondslength = 0.1; %number of seconds length to generate
+            secondslength = 1; %number of seconds length to generate
         pcount = 30; %number of periods to generate otherwise
     playsounds = false;
     volume = 10; %0-100 please
@@ -31,8 +33,6 @@ clc, clear variables, clear sound, clear sounds, close all;
         graphFFT = false; %graph FFT(y)
         doHEcont = true; %compute H & E continuous
         graphHEcont = true; %graph H & E continuous
-    debugHEgraphs = false; %HE debug mode
-        debug_starti = 0; %sample to start debug graphing at
 %END CVARS
 
 %% Generate wave
@@ -55,7 +55,7 @@ if(readfile == false)
     end
     fprintf("Generated wave properties:\nfreq = %.2f Hz\nperiod = %.5g s\nsamples/period = %.3f samples\n",f,p,samplesperperiod);
     fprintf('Resampling Rate = %d up / %d down, RS freq = %.2f Hz, RS samples/period = %.3f samples\n',upsample_rate,downsample_rate,f*resample_period,samplesperperiod*resample_rate); %print detected pitch
-    fetchnote_print(f);
+    fetchnote_print(f,A4freq,scale_name,scalemap);
     x = 0:c-1; %x = c # of samples
     %x = (x ./ c)  .* (p * pcount);  %(( x = 0:1) * period length) * # of periods
     %changed to x = samples only
@@ -71,7 +71,7 @@ if(readfile == false)
     %stair steps
         fmod_stairstep_size = floor(length(x)/12);
         a = linspace(1,2,floor(length(x)/(fmod_stairstep_size)));
-        b = [repmat(a,fmod_stairstep_size,1)];
+        b = repmat(a,fmod_stairstep_size,1);
         fmod_stairsteps = b(:)';
     %oscillator
         fmod_f = 20; %Hz
@@ -91,7 +91,8 @@ else
     end
     x = 1:length(y); %x = X samples to match y sample count
     f = 0;
-    samplesperperiod = length(x);
+    p = 0;
+    samplesperperiod = 0;
     fprintf("File sample count = %d (%.3f seconds), samplerate = %d\n",length(x),length(x)/samplerate,SR_file);
     samplerate = SR_file; %experiment, override set samplerate with file's
 end
@@ -138,6 +139,19 @@ if(playsounds)
 else
     soundedStr = "";
 end
+%scales:
+scalemap = containers.Map; %matlab hashmap
+%For now: must repeat at the octave, and be 12 notes C -> note before repeat.
+  %12edo (default)
+    scalemap('12edo') = [2^(1/12) 2^(2/12) 2^(3/12) 2^(4/12) 2^(5/12) 2^(6/12) 2^(7/12) 2^(8/12) 2^(9/12) 2^(10/12) 2^(11/12) 2];
+  %5-limit just intonation
+    scalemap('just5') = [16/15 9/8 6/5 5/4 4/3 45/32 3/2 8/5 5/3 16/9 15/8 2];
+  %C major scale JI5
+    scalemap('cmajor') = [1 9/8 5/4 5/4 4/3 4/3 3/2 5/3 5/3 15/8 15/8 2];
+scale = scalemap(scale_name); %load the scale array
+scalename = scale_name; %alias
+fprintf("Using scale: '%s'\n",scale_name);
+%
 fprintf('\n');
 
 %% graph y
@@ -178,13 +192,13 @@ end
 
 %% full fixed autocorrelation
 fprintf("R(y):\n");
-    [R_x, R, R_f, R_fQI] = handle_R(y,length(y),readfile,f,samplerate,resample_rate,0,0);
+    [R_x, R, R_f, R_fQI] = handle_R(y,length(y),readfile,f,samplerate,resample_rate,0,0,A4freq,scale_name,scalemap);
     R_p = R_f^-1; %periods
     R_pQI = R_fQI^-1;
     R_spp = R_p * samplerate; %samples per period
     R_sppQI = R_pQI * samplerate;
 %fprintf("R(y rs):\n");
-    %[R_rs_x, R_rs, R_rs_f, R_rs_fQI] = handle_R(y_rs,length(y_rs)-1,readfile,f,samplerate,resample_rate,1,0);
+    %[R_rs_x, R_rs, R_rs_f, R_rs_fQI] = handle_R(y_rs,length(y_rs)-1,readfile,f,samplerate,resample_rate,1,0,A4freq,scale_name,scalemap);
 xlim_x_R = (length(R)-1) * (xTimeUnits_modifier);
 if(xLimTo_pcount) %limit to pcount
     xlim_x_R = (samplesperperiod*pcount*2) * (xTimeUnits_modifier);
@@ -213,11 +227,6 @@ figure(yplots) %bring to front
 fprintf("Lags used: [0-%d]\n",lags-1);
 
 %% Continuous Pitch Detection w/ E & H
-%debug control moved to top
-if(debugHEgraphs)
-    HEdebugplots = figure('Name','EH debug plots');
-end
-usetimesavers = false;%may change detection behavior, default off
 if(doHEcont) %H,E continuous
     %prepare arrays. fill with zeros to avoid checks in the loop
     fC_tracker = zeros(1,length(y_rs)+0); %tracks detected frequency
@@ -245,6 +254,7 @@ if(doHEcont) %H,E continuous
     HEC_spp = 0;
     HEC_p = 0;
     HEC_f = 0;
+    f_closest = 0;
     HEC_f_diff = 0; %difference in f for pitch shift buffer
     %HEC_f_diff_last = 0;
     HEC_f_ratio = 1; %ratio of needed/detected
@@ -252,29 +262,26 @@ if(doHEcont) %H,E continuous
     s = "";
     i_rs = 1;
     print_samplei = true; %show sample i=#
+    usetimesavers = false; %messes up detection, leave off
+    debugHEgraphs = false; %HE debug mode
+        debug_starti = 0; %sample to start debug graphing at
+    
+    if(debugHEgraphs)
+        HEdebugplots = figure('Name','EH debug plots');
+    end
     tic; %time this process
     for i = 1:length(y) %big ol' for loop, realtime will use a while loop
         y_Lbuffer = [y_Lbuffer(2:end) y(i)];
 %         y_smallbuffer = [y_smallbuffer(2:end) y(i)]; %faster
-        %iterative E & H
-%         for a = 1:H_lag*RSP
-%             EHC_newterms = [y_Lbuffer(E_lag*RSP) y_Lbuffer(E_lag*RSP-a+1) y_Lbuffer(E_lag*RSP-2*a+1)];
-%             EC(a) = EC(a) + EHC_newterms(1).^2 - EHC_newterms(3).^2;
-%             HC(a) = HC(a) + EHC_newterms(1).*EHC_newterms(2) - EHC_newterms(2).*EHC_newterms(3);
-%         end
-%         a = 1:H_lag*RSP;
-%             EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(end);
-%             EHC_newterm2 = y_Lbuffer(E_lag*RSP-a+1);
-%             EHC_newterm3 = y_Lbuffer(E_lag*RSP-2*a+1);
-%             EC = EC + EHC_newterm1.^2 - EHC_newterm3.^2;
-%             HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm2.*EHC_newterm3;
-          a = 1:H_lag*RSP; %testing new terms
-            EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(end);
-            EHC_newterm2 = y_Lbuffer(end-a-0);
-            EHC_newterm3 = y_Lbuffer(end-2*a);
-            EHC_newterm4 = y_Lbuffer(end-a-0);
-            EC = EC + EHC_newterm1.^2 - EHC_newterm3.^2;
-            HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm4.*EHC_newterm3;
+            %iterative E & H
+            a = 1:H_lag*RSP;
+                EHC_newterm1 = ones(1,H_lag*RSP) .* y_Lbuffer(end);
+                EHC_newterm2 = y_Lbuffer(end-a-0);
+                EHC_newterm3 = y_Lbuffer(end-2*a);
+                EHC_newterm4 = y_Lbuffer(end-a-0);
+                EC = EC + EHC_newterm1.^2 - EHC_newterm3.^2;
+                HC = HC + EHC_newterm1.*EHC_newterm2 - EHC_newterm4.*EHC_newterm3;
+
         if(mod(i,1*resample_period) == 0) %only check pitch every resampled point for now
             
             %can put breakpoint on this for debug
@@ -290,21 +297,10 @@ if(doHEcont) %H,E continuous
                     fprintf("\n");
                 end
             end
-%             y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer]; %do this in here
+            %y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer]; %do this in here
             y_Lbuffer_rs = [y_Lbuffer_rs(2:end) y_rs(i_rs)];
-            %iterative equations from patent
-%             for a = 1:H_lag
-%                 EHC_rs_newterms = [y_Lbuffer_rs(E_lag) y_Lbuffer_rs(E_lag-a+1) y_Lbuffer_rs(E_lag-2*a+1)];
-%                 EC_rs(a) = EC_rs(a) + EHC_rs_newterms(1).^2 - EHC_rs_newterms(3).^2;
-%                 HC_rs(a) = HC_rs(a) + EHC_rs_newterms(1).*EHC_rs_newterms(2) - EHC_rs_newterms(2).*EHC_rs_newterms(3);
-%             end
-%             a = 1:H_lag;
-%                 EHC_rs_newterm1 = ones(1,H_lag) .* y_Lbuffer_rs(E_lag);
-%                 EHC_rs_newterm2 = y_Lbuffer_rs(E_lag-a+1);
-%                 EHC_rs_newterm3 = y_Lbuffer_rs(E_lag-2*a+1);
-%                 EC_rs(a) = EC_rs(a) + EHC_rs_newterm1.^2 - EHC_rs_newterm3.^2;
-%                 HC_rs(a) = HC_rs(a) + EHC_rs_newterm1.*EHC_rs_newterm2 - EHC_rs_newterm2.*EHC_rs_newterm3;
-              a = 1:H_lag; %testing new terms
+            %iterative E & H resampled
+              a = 1:H_lag;
                 EHC_rs_newterm1 = ones(1,H_lag) .* y_Lbuffer_rs(end);
                 EHC_rs_newterm2 = y_Lbuffer_rs(end-a-0);
                 EHC_rs_newterm3 = y_Lbuffer_rs(end-2*a);
@@ -352,13 +348,30 @@ if(doHEcont) %H,E continuous
             if(detectNewLmin) %transfer to non-resampled H & E
                 Lmin1C = (Lmin1C_rs)*resample_period;
                 Lmin2C = (Lmin2C_rs)*RSP;
-                %below equations give different results from iteratives
-                EHC_Lbuffer_input = y_Lbuffer(end-(E_lag*RSP-1):end);
-                 %EC = [calcE(EHC_Lbuffer_input,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcE(EHC_Lbuffer_input,Lmin2C+RSP,Lmin2C-RSP);
-                 %HC = [calcH(EHC_Lbuffer_input,Lmin1C+RSP,Lmin1C-RSP) zeros(1,Lmin2C+RSP-Lmin1C-RSP)] + calcH(EHC_Lbuffer_input,Lmin2C+RSP,Lmin2C-RSP);
-                 %EC = calcE(EHC_Lbuffer_input,lags*RSP,0);
-                 %HC = calcH(EHC_Lbuffer_input,lags*RSP,0);
-                 %HC = autoc(EHC_Lbuffer_input,lags*RSP,0);
+                if(false) %non-iterative E & H calculation
+                    %len: = E_lag*resample_period+RSP
+                    EHC_calc_Lbuffer = y_Lbuffer(end-(E_lag*RSP-1):end);
+                    EC = ones(1,length(EC));
+                    HC = ones(1,length(EC));
+                    %get ranges to calculate
+                    EHC_rL1 = Lmin1C-RSP:Lmin1C+RSP;
+                    EHC_rL1 = EHC_rL1(EHC_rL1 <= length(EC));
+                    EHC_rL2 = Lmin2C-RSP:Lmin2C+RSP;
+                    EHC_rL2 = EHC_rL2(EHC_rL2 <= length(EC));
+                    %calc
+                    EC(EHC_rL1) = calcE(EHC_calc_Lbuffer,EHC_rL1(end),EHC_rL1(1)-1);
+                    EC(EHC_rL2) = calcE(EHC_calc_Lbuffer,EHC_rL2(end),EHC_rL2(1)-1);
+                    HC(EHC_rL1) = calcH(EHC_calc_Lbuffer,EHC_rL1(end),EHC_rL1(1)-1);
+                    HC(EHC_rL2) = calcH(EHC_calc_Lbuffer,EHC_rL2(end),EHC_rL2(1)-1);
+                    %set uncalculated values (ones) to edges' values
+                    EC(1:length(EC)-1 < EHC_rL1(1)) = EC(EHC_rL1(1));
+                    EC(1:length(EC)-1 > EHC_rL2(end)) = EC(EHC_rL2(end));
+                    EC(1:length(EC)-1 > EHC_rL1(end) & 1:length(EC)-1 < EHC_rL2(1)) = EC(EHC_rL2(1));
+                    HC(1:length(EC)-1 < EHC_rL1(1)) = HC(EHC_rL1(1));
+                    HC(1:length(EC)-1 > EHC_rL2(end)) = HC(EHC_rL2(end));
+                    HC(1:length(EC)-1 > EHC_rL1(end) & 1:length(HC)-1 < EHC_rL2(1)) = HC(EHC_rL2(1));
+                end
+                %E-2H
                 HECcompare = EC - E_pmult.*HC;
                 if(~isrow(HECcompare)) %to row vector
                     HECcompare = HECcompare';
@@ -429,7 +442,7 @@ if(doHEcont) %H,E continuous
                     HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-0; %QI
                     HEC_p = HEC_spp/samplerate;
                     HEC_f = samplerate/(HEC_spp); %detected f
-                    f_closest = fetchnote_fastf(HEC_f,C0);
+                    f_closest = fetchnote_fastf(HEC_f,C0,scale);
                     %if not updated, these will retain previous value
                     %update pitch diff = detected f - closest note f
                     HEC_f_diff = HEC_f - f_closest;
@@ -459,7 +472,7 @@ if(doHEcont) %H,E continuous
                 fprintf("\n")
                 %EHC_plot_x =(LminC_points_ext-1).*(xTimeUnits_modifier);
                 EHC_plot_x = 0:length(EC)-1;
-                figure(HEdebugplots)
+                %figure(HEdebugplots)
                 clf
                 subplot(2,4,1) %E(y)
                   plot(EHC_plot_x,EC,'.-','MarkerSize',MarkerSizeNormal,'Color',graphcolors(1,:));
@@ -509,8 +522,8 @@ if(doHEcont) %H,E continuous
     if(print_samplei)
         fprintf("\n");
     end
-    HEcont_elapsedtime = toc; %end timing
-    fprintf("Continuous detection elapsed time: %.3f seconds\nExec time < sample time?: %s\n",HEcont_elapsedtime,mat2str(HEcont_elapsedtime < length(y)/samplerate));
+    HEcont_pd_elapsedtime = toc; %end timing
+    fprintf("Continuous detection elapsed time: %.3f seconds\n",HEcont_pd_elapsedtime);
     if(graphHEcont)
         HEcont_plot_x = (0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier);
         FCplot = figure('Name','EH continuous f');
@@ -582,37 +595,71 @@ if(doHEcont) %H,E continuous
         plot(PSplot_x,ynew_rsbuffer_ratio,'.-','MarkerSize',MarkerSizeSmall,'Color',graphcolors(1,:));
         title("ratios of f")
     end
+    tic; %time
     %samplerates for each section = ratios * original samplerate
     ynew_samplerates_modified = ones(1,length(ynew_rsbuffer_ratio)) .* samplerate .* ynew_rsbuffer_ratio;
     %y to be retuned
     y_retunedHE = y;
+    y_retunedHE = zeros(1,length(y));
     %make sure size of y is evenly divisible by resampling period
     if(length(y_retunedHE)/RSP < length(ynew_rsbuffer_ratio))
         %y_retunedHE = [y_retunedHE zeros(1,RSP-mod(length(y_retunedHE),RSP))]
         y_retunedHE = [y_retunedHE zeros(1,RSP)]; %just pad some zeros
     end
+    c = 1; %counter
+    length_changed_check = true;
+    %set below to be: > than SPP of lowest f you want autotuned
+    %128 * 8 (default spp = ds rate) = 1024 samples will be > spp of 50Hz (882).
+    retune_sliceRatio = 128; %resize set of points (RSP*wR) (whole number)
+    retune_ratio_transpose = 1; %transpose by additional ratio
     %for loop at the end for fixed-time
-    for a = 1:length(ynew_rsbuffer_ratio)
-        retune_RSP_range = 1+RSP*(a-1):RSP+RSP*(a-1); %RSP# point ranges
-        [num, denom] = rat(ynew_rsbuffer_ratio(a)); %matlab's rational approximator
+    for a = 1:floor(length(ynew_rsbuffer_ratio)/retune_sliceRatio)
+        retune_RSP = RSP * retune_sliceRatio;
+        retune_RSP_range = 1+retune_RSP*(a-1):retune_RSP+retune_RSP*(a-1); %RSP# point ranges
         %use pitch shift function for each set of points
-        y_retunedHE(retune_RSP_range) = pitch_shift_8pt(y(retune_RSP_range),num,denom);
+        retune_ratio = ynew_rsbuffer_ratio(a*retune_sliceRatio) .* retune_ratio_transpose;
+        if(retune_sliceRatio > 1) %try out averaging the PS ratio over the slice
+            retune_ratio_sRrange = 1+retune_sliceRatio*(a-1):retune_sliceRatio+retune_sliceRatio*(a-1);
+            if(retune_ratio_sRrange(end) > length(ynew_rsbuffer_ratio)) %stop errors
+                retune_ratio_sRrange = retune_ratio_sRrange(1):length(ynew_rsbuffer_ratio);
+            end
+            retune_ratio = mean(ynew_rsbuffer_ratio(retune_ratio_sRrange) .* retune_ratio_transpose);
+        end
+        %perform the actual pitch shifting of the slice
+        retune_part = pitch_shift_Npt(y(retune_RSP_range),retune_ratio);
+        %notify if different # of points as input, once
+        if(length(retune_part) ~= length(y(retune_RSP_range)) && length_changed_check)
+            fprintf("! Using PS method that resizes slices\n");
+            length_changed_check = false;
+        end
+        %y_retunedHE(retune_RSP_range) = retune_part;
+        %supports differing lengths:
+        y_retunedHE(c:c+length(retune_part)-1) = retune_part;
+        c = c + length(retune_part);
+    end
+    HEcont_ps_elapsedtime = toc; %end timing
+    fprintf("Continuous retuning elapsed time: %.3f seconds\nTotal time: %.3f seconds\nTotal Exec time < sample time?: %s\n",HEcont_ps_elapsedtime,HEcont_pd_elapsedtime+HEcont_ps_elapsedtime,mat2str(HEcont_pd_elapsedtime+HEcont_ps_elapsedtime < length(y)/samplerate));
+    if(length(y_retunedHE) ~= length(y))
+        fprintf("! Final PS wave different size than input. Sample difference = %d\n",length(y)-length(y_retunedHE));
     end
     %graph
-    Retunedplot = figure('Name','Retuned waveform (HE)');
+    if(true)
+      Retunedplot = figure('Name','Retuned waveform (HE)');
         if(playsounds)
             soundedStr = "(sounded 2nd) ";
         end
       subplot(1,1,1)
-        plot(x.*(xTimeUnits_modifier),y_retunedHE,'.-','MarkerSize',MarkerSizeTiny,'Color',graphcolors(4,:));
-        xlim([0 xlim_x])
+        set(Retunedplot,'Position', [screencenter(1)-gs(1)/2-gs(1) screencenter(2)-gs(2)/2+100-gs(2)/2 gs(1) gs(2)]);
+        plot((0:length(y_retunedHE)-1).*(xTimeUnits_modifier),y_retunedHE,'.-','MarkerSize',MarkerSizeTiny,'Color',graphcolors(4,:));
+        %xlim([0 xlim_x])
         title("y retuned" + soundedStr)
         ylim(ylimits)
+    end
 end
 
 %% playback pitch shifted wave
 %playing sounds through resampling
-% [~, ~, target_f] = fetchnote(R_fQI); %find needed f
+% [~, ~, target_f] = fetchnote(R_fQI,A4freq,scale_name,scalemap); %find needed f
 % samplerate_tuned_ratio = target_f/R_fQI; %ratio between needed/found f
 % samplerate_tuned = round(samplerate * samplerate_tuned_ratio); %new S.R.
 % %higher SR = higher pitch, lower SR = lower pitch
@@ -622,7 +669,11 @@ end
 y_retuned = y_retunedHE; %put wave here
 samplerate_tuned = samplerate; %restore samplerate
 
-%if we save y_retuned we can run pitch detection on it too.
+%save Y and Y_retuned to .wav files
+[~,~] = mkdir('output/');
+audiowrite('output/Y.wav',y,samplerate);
+audiowrite('output/Y_retuned.wav',y_retuned,samplerate);
+fprintf("\n")
 
 if(playsounds) %plays the sounds
     volpeakpoint = 100/volume;
@@ -665,7 +716,7 @@ function [x, y] = resampleY(y,upsample_rate,downsample_rate,useLPfilter)
     x = 0:length(y)-1;
 end
 
-function [x, R, fR, fR_QI] = handle_R(y,lags,readfile,f,samplerate,resample_rate,isResampled,noAcorr)
+function [x, R, fR, fR_QI] = handle_R(y,lags,readfile,f,samplerate,resample_rate,isResampled,noAcorr,A4freq,scale_name,scalemap)
 %fully autocorrelates an input for specified lags, and prints info
 %outputs x, R, guessed frequency fR, and ^2 interpolated fR
     %defaults:
@@ -709,14 +760,14 @@ function [x, R, fR, fR_QI] = handle_R(y,lags,readfile,f,samplerate,resample_rate
         xweneed = QInterp_peak(peaknfriends,R(peaknfriends)); %QI
         fR_QI = samplerate/(xweneed-1)*resample_rate; %QI detected f
         fprintf('AVG Peak p detected pitch: R_f = ') %print out f results
-        report_ptof(fR,readfile,f)
+        report_ptof(fR,readfile,f,A4freq,scale_name,scalemap)
         fprintf('Q. interpolated p detected pitch: R_fQI = ')
-        report_ptof(fR_QI,readfile,f)
+        report_ptof(fR_QI,readfile,f,A4freq,scale_name,scalemap)
     end
     fprintf("\n");
 end
 
-function report_ptof(f,readfile,f_generated)
+function report_ptof(f,readfile,f_generated,A4freq,scale_name,scalemap)
 %reports frequency results. generatedf used if not reading a file
     %fprintf('detected pitch: f = %.2f Hz, p = %f s, samples/period = %.5g samples\n',fR,1/fR,samplerate/fR*resample_rate);
     fprintf('%.2f Hz, ',f)
@@ -729,12 +780,12 @@ function report_ptof(f,readfile,f_generated)
       end
       fprintf('\n');
     end
-    fetchnote_print(f); %find closest note
+    fetchnote_print(f,A4freq,scale_name,scalemap); %find closest note
 end
 
 function Qx = QInterp_peak(x_3, y_3)
 %finds peak of quadratic interpolation on 3 points
-    p = polyfit(-1:1,y_3,2); %fit ^2, a = y, x = -1 to 1 (3 points effectively)
+    p = polyfit_fast(-1:1,y_3,2); %fit ^2, a = y, x = -1 to 1 (3 points effectively)
     %pval = polyval(p,-1:1); %show the 3 points
     pvalext = polyval(p,linspace(-1,1,500)); %full evaluation, spacing should be large number
     [~,plocs] = findpeaks_fast(pvalext); %find the peak's x value
@@ -761,47 +812,34 @@ function a = autoc(y,lags,minlag)
 end
 
 function E = calcE(y,lags,minlag)
-%energy (no lag), with input range (minlag to (lags-1)) * 2
-    minlag = minlag + 1; %ind0 -> ind1
+%energy (no lag), with input range 2*[minlag, (lags-1)]
+%only does up to L points for each lag
+    minlag = minlag + 1; %calculate only from this lag onward (0 -> 1)
     E_pmult = 2;% * L (= 2L used)
-    E_lag = lags*E_pmult; %2L
-    endy = E_lag*2;
-    if(endy > length(y))
-        endy = length(y);
-    end
-    y = y(1:endy); %use only y(1 to lags*2)
-    y = [y zeros(1,E_lag)+2]; %zero padding to stop array index errors
-    E = zeros(1,lags); %prep, only doing limited lags
     y_squared = y .* y; %y^2 = y * y
-    E(1) = sum(y_squared(1:2)); %Error check this recursive optimization
-    for c = (minlag+1):length(E)
-        %only sum c points, not all points
-        %E(c) = sum(y_squared(1:c*E_pmult));
-        E(c) = E(c-1) + y_squared(c*E_pmult-1) + y_squared(c*E_pmult);
+    E = zeros(1,lags); %set up with zeros
+    %get E(minlag-1):
+    prevEc_minlagpart = y_squared(end-(minlag-1)*E_pmult+1:end);
+    prevEc = (minlag>1)*sum(prevEc_minlagpart);
+    for c = minlag:length(E)
+        %recursive sum + next two y^2 points
+        E(c) = prevEc + y_squared(end-c*E_pmult+1) + y_squared(end-(c-1)*E_pmult);
+        prevEc = E(c);
     end
+    E = E(minlag:end); %only return range
 end
 
 function H = calcH(y,lags,minlag)
-%autocorrelation with lag range minlag to (lags-1), doesn't divide out variance
+%autocorrelation with lag range [minlag, lags-1], doesn't divide out variance
 %only does up to L points for each lag
-%check this function again sometime
-    minlag_set = 1;
-    if(nargin > 2)
-        minlag_set = minlag+1;
-    end
-    endy = lags*2;
-    if(endy > length(y))
-        endy = length(y);
-    end
-    y = y(1:endy); %use only y(1 to lags*2)
-    y = [y zeros(1,lags+2)]; %zero padding to stop array index errors
+    minlag = minlag + 1; %calculate only from this lag onward (0 -> 1)
+    y = [zeros(1,lags+2) y]; %zero padding on left to stop array index errors
     H = zeros(1,lags); %set up with zeros
-    for c = minlag_set:length(H)
-        %m = y_i * y_i-L = y(t) * y(t+c)
-        %m = y .* [y(c:end) zeros(1,c-1)]; %y * y shifted left by L
-        m = y .* [zeros(1,c-1) y(1:end-c+1)]; %y * y shifted right by L
-        H(c) = sum(m(1:c)); %only sum c points, not all points
+    for c = minlag:length(H)
+        %sum of y_i * y_i-L
+        H(c) = sum(y(end-c+1:end) .* y(end-c+1-c+1:end-c+1));
     end
+    H = H(minlag:end); %only return range
 end
 
 function [pks,locs] = findpeaks_fast(y)
@@ -825,6 +863,46 @@ function [pks,locs] = findpeaks_fast(y)
 %     locs = locs(1:num);
 end
 
+function [p,S,mu] = polyfit_fast(x,y,n)
+%same as polyfit.m but removed some warnings that take forever
+if ~isequal(size(x),size(y))
+    error(message('MATLAB:polyfit:XYSizeMismatch'))
+end
+
+x = x(:);
+y = y(:);
+
+if nargout > 2
+   mu = [mean(x); std(x)];
+   x = (x - mu(1))/mu(2);
+end
+
+% Construct Vandermonde matrix.
+V(:,n+1) = ones(length(x),1,class(x));
+for j = n:-1:1
+   V(:,j) = x.*V(:,j+1);
+end
+
+% Solve least squares problem.
+[Q,R] = qr(V,0);
+p = R\(Q'*y);    % Same as p = V\y;
+if size(R,2) > size(R,1)
+   warning(message('MATLAB:polyfit:PolyNotUnique'))
+end
+
+if nargout > 1
+    r = y - V*p;
+    % S is a structure containing three elements: the triangular factor from a
+    % QR decomposition of the Vandermonde matrix, the degrees of freedom and
+    % the norm of the residuals.
+    S.R = R;
+    S.df = max(0,length(y) - (n+1));
+    S.normr = norm(r);
+end
+
+p = p.';          % Polynomial coefficients are row vectors by convention.
+end
+
 function f = constrain(y,bl,bu)
 %return bounded value clipped between lower and upper bound
 	f = min(max(y,bl),bu);
@@ -835,21 +913,29 @@ function f = normalize(y)
     f = 2*(y - min(y))./(max(y) - min(y)) - 1;
 end
 
-function cents = Hz2Cents(f,Czero)
-%change Hz to cents based off C0 (from A4)
-    if(f <= 0) %handle bad input
-        cents = 0; %f > 0 Hz required
-        return;
-    end
-    cents = 1200.*log(f./Czero)./log(2); %convert to cents/100
+%these need to be addressed for different scales now
+% function cents = Hz2Cents(f,A4freq)
+% %change Hz to cents based off C0 (from A4)
+%     if(f <= 0) %handle bad input
+%         cents = 0; %f > 0 Hz required
+%         return;
+%     end
+%     Czero = 2^(-(9+12*4)/12)*A4freq; %C0
+%     cents = 1200.*log(f./Czero)./log(2);
+% end
+% 
+% function f = Cents2Hz(cents,A4freq)
+% %change cents to Hz based off C0 (from A4)
+%     Czero = 2^(-(9+12*4)/12)*A4freq; %C0
+%     f = 2.^(cents./1200).*Czero;
+% end
+
+function f_OR = octave_reduce(f)
+%octave reduce f (Hz) to range [1,2) Hz
+    f_OR = exp(mod(log(f),log(2)));
 end
 
-function f = Cents2Hz(cents,Czero)
-%change cents to Hz based off C0 (from A4)
-    f = 2.^(cents./1200).*Czero;
-end
-
-function [note_name, error_cents, target_f] = fetchnote(x)
+function [note_name, error_cents, target_f] = fetchnote(x,A4freq,scale_name,scalemap)
 %return closest 12EDO note n of frequency x (Hz) and error e (cents)
 %target_f is the frequency of the correct note
     if(x <= 0) %handle bad input
@@ -859,7 +945,6 @@ function [note_name, error_cents, target_f] = fetchnote(x)
         target_f = 0;
         return;
     end
-    global A4freq;
     notes = ["C" "C#/Db" "D" "D#/Eb" "E" "F" "F#/Gb" "G" "G#/Ab" "A" "A#/Bb" "B"];
     Czero = 2^(-(9+12*4)/12)*A4freq; %C0
     h = round(12*log(x/Czero)/log(2)); %convert to cents/100
@@ -878,28 +963,49 @@ function [note_name, error_cents, target_f] = fetchnote(x)
     target_f = 2^((note_index-1+12*double(x_octave))/12)*Czero;
 end
 
-function target_f = fetchnote_fastf(x,Czero)
-%return closest 12EDO note frequency (Hz), target_f
-    if(x <= 0) %handle bad input\
+function target_f = fetchnote_fastf(x,A4freq,scale_ARRAY)
+%return closest frequency (Hz) from scale ARRAY (12 notes), target_f.
+%octave equivalency assumed
+    if(x <= 0) %handle bad input
         %fprintf("! fetchnote_fastf() only to be used with positive f input\n");
         target_f = 0;
         return;
     end
-    h = round(12*log(x/Czero)/log(2)); %convert to cents/100
-    x_octave = idivide(int32(h),int32(12)); %get octave number
-    note_index = mod(h,12)+1; %get array index
+    scale_ARRAY = [1 scale_ARRAY]; %append 1 at beginning
+    C4 = A4freq/scale_ARRAY(9+1); %C4 from scale degree 9
+    C0 = C4/16;
+    SA_cents = Hz2Cents(scale_ARRAY,1);
+    x_cents = Hz2Cents(x,C0);
+    [~,note_index] = min(abs(SA_cents - mod(x_cents,1200)));
 
-    target_f = 2^((note_index-1+12*double(x_octave))/12)*Czero;
+    target_f = Cents2Hz(x_cents + SA_cents(note_index) - mod(x_cents,1200),C0);
+    
+    function cents = Hz2Cents(f,Czero)
+        cents = 1200.*log(f./Czero)./log(2);
+    end
+    function f = Cents2Hz(cents,Czero)
+        f = 2.^(cents./1200).*Czero;
+    end
 end
 
-function fetchnote_print(x)
+function fetchnote_print(x,A4freq,scale_name,scalemap)
 %print out fetchnote information
-    [n, e, f] = fetchnote(x);
+    [n, e, f] = fetchnote(x,A4freq,scale_name,scalemap);
     fprintf("Closest note = %s (%.2f Hz) Error (cents) = %+.1f\n",n,f,e);
 end
 
+function y_new = pitch_shift_Npt(y,ratio)
+%the pitch shifting used on the groups of N points in HE
+    [num, denom] = rat(ratio); %matlab's rational approximator
+    
+    y_new = pitch_shift_Npt_linterp(y,ratio,false); %change length
+    %uncomment below to use
+    %y_new = pitch_shift_ratio(y,num,denom);
+    
+end
+
 function y_new = pitch_shift_ratio(y,num,denom)
-%pitch shifts a data set by a f ratio n/d
+%pitch shifts a data set by a integer ratio n/d
 %n & d will usually be around 3-4 digits (base 10)
     y_new = y; %init
     %do the things in here
@@ -907,16 +1013,33 @@ function y_new = pitch_shift_ratio(y,num,denom)
     
     %make sure y_new is set as output
     
-    %y_new should be the same # of points as y
-    if(length(y_new) ~= length(y))
-        printf("PS length changed. bad.");
-    end
 end
 
-function y_new = pitch_shift_8pt(y,num,denom)
-%pitch shifts 8 points by a f ratio n/d
-%this will be the same function as the above for now
-    y_new = pitch_shift_ratio(y,num,denom);
+function y_new = pitch_shift_Npt_linterp(y,ratio,retain_length)
+%pitch shifts N points by a ratio through stretch or compress
+%will create discontinuities/jumps esp with retain_length, iffy behavior
+%try and clean this up later?
+    if(ratio == 1 || ratio <= 0) %handle bad cases
+        y_new = y;
+        return;
+    end
+    y_to_interp = repmat(y,1,ceil(1/ratio)); %have enough periods avail
+    if(ratio < 1)
+        y_to_interp = y_to_interp(1:round(length(y)/ratio));
+    end
+    x_new = (0:length(y_to_interp)-1).*ratio; %new dx to interp
+    y_new = interp1(0:length(x_new)-1,y_to_interp,x_new);
+    y_new(isnan(y_new)) = [];
+    if(length(y_new) < length(y))
+        y_new = repmat(y_new,1,ceil(length(y)/length(y_new)));
+        y_new = y_new(1:round(length(y)/ratio));
+    end
+    if(retain_length)
+        y_new(isnan(y_new)) = [];
+        y_new = repmat(y_new,1,ceil(length(y)/length(y_new)));
+        y_new = y_new(1:length(y)); %only use first N points
+    end
+    y_new(isnan(y_new)) = []; %remove null points
 end
 
 %for MATLAB; ignore some warnings
