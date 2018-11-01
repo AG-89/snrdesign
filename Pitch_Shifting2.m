@@ -2,34 +2,35 @@
 clc, clear variables, clear sound, clear sounds, close all;
 
 f = 261;
-filename = 'File.wav'; %accept file
+filename = 'DoReMi.wav'; %accept file
 wp = 900;    %pass band in hz
 wz = 1000;   %stop band in hz
 %Filter signal : -2 = pass band gain dB , -20 = stop band gain dB
 [num,den] = makefilter('lowpass','butter',-2,-20,wp,ws);
 %Perform filtering
-runfilter(num,den,'File.wav');
-x = sin(2*pi*f);
+
+runfilter(num,den,filename);
+%x = sin(2*pi*f);
+x = audioread(filename);
+
 %Center clip to reduce noise
 CL = 0.3 * max(x);
     if x > CL
         C(x) = x - CL;
-    else
-        abs(x) <= CL;
+    elseif(abs(x) <= CL)
         x = 0;
-    else
-        x < -CL;
+    elseif(x < -CL)
         C(x) = x + CL;
     else
         x = 0;
     end
 %Define best overlap offset seeking window for 15 ms
-W = 0.015;  
+W = 0.025;  
 T = f^-1;   %time period of current frame
-rT =        %auto-correlated signal
-Xi =        %new window
-Xi_prev =       %previous window
-    for i=1 : W-T
+rT = autocorr(x);     %auto-correlated signal
+Xi = 0;      %new window
+Xi_prev = 0;      %previous window
+    for i = 1 : W-T + 1
      rT = Xi - Xi_prev;
      PT = rT;    %pitch period
     end
@@ -43,10 +44,13 @@ M = max(y(k,1));     %first pitch mark at "t"
 %Locate pitch marks left/right of maximum pitch mark M
 tm + f * To <= t <= tm + (2-f) * To;
 tm - f * To <= t <= tm - (2-f) * To;
-function pitch_marks = px = find_pmarks(M)
+%function pitch_marks = 
+px = find_pmarks(M)
 %Interpolate pitch contour
+
 function v = interp[x,px,M]
 end
+
 %Input pitch contour , SR = search region of speech segments of input wave
 SR = [tm + f. To ; tm + (2-f). To];
 SR = v[x,px,M]

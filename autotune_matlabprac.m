@@ -1,4 +1,5 @@
-%snr design autotune practice%Team: Ashlin G, Alex G, Brandon Y
+%snr design autotune practice
+%Team: Ashlin G, Alex G, Brandon Y
 clc, clear variables, clear sound, clear sounds, close all;
 
 %% CONTROL VARIABLES
@@ -17,8 +18,8 @@ clc, clear variables, clear sound, clear sounds, close all;
         downsample_rate = 8; %behavior not checked for other values
         upsample_rate = 1;
     %input file
-        readfile = false; %read file or generate wave
-        filename = strcat('file','.wav'); %stereo files converted to mono
+        readfile = true; %read file or generate wave
+        filename = strcat('test','.wav'); %stereo files converted to mono
     %input generation if not file
         frequency = 261.6; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
@@ -43,7 +44,7 @@ scalemap = containers.Map; %matlab hashmap
 %For now: must repeat at the octave, must start on 'C' equivalent
 %todo: add cents support (ratio > small integer -> cents)
   %generate all the edos (Equal Division of the Octave, logarithmically)
-    for edo = 2:72
+    for edo = 1:72
         edo_array = 2.^linspace(0,1,edo+1);
         scalemap(strcat(int2str(edo),'edo')) = edo_array(2:end); %remove 1/1
     end
@@ -220,7 +221,7 @@ if(xLimTo_pcount) %limit to pcount
     end
 end
 xlim_x_R_rs = xlim_x_R*resample_rate; %for resampled
-if(graphRy && ~readfile)
+if(graphRy)
   Rplots = figure('Name','Full Autocorrelation');
   gs = graphsize; %alias, below sets position
   set(Rplots,'Position', [screencenter(1)-gs(1)/2-gs(1) screencenter(2)-gs(2)/2+100-gs(2)/2 gs(1) gs(2)]);
@@ -295,8 +296,9 @@ if(true) %H,E continuous
     end
     tic; %time this process
     for i = 1:length(y) %big ol' for loop, realtime will use a while loop
-%         y_Lbuffer = [y_Lbuffer(2:end) y(i)];
-         y_smallbuffer = [y_smallbuffer(2:end) y(i)]; %faster
+        y_Lbuffer = circshift(y_Lbuffer,-1); %faster than brackets
+        y_Lbuffer(end) = y(i);
+%          y_smallbuffer = [y_smallbuffer(2:end) y(i)];
 
         if(mod(i,1*resample_period) == 0) %only check pitch every resampled point for now
             
@@ -316,13 +318,15 @@ if(true) %H,E continuous
                     end
                 end
             end
-            y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer]; %do this in here
+%             y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer];
             %iterative E & H
-            [EC, HC] = EH_iterate_mex(EC,HC,y_Lbuffer,H_lag*RSP,8); %test        
+%             [EC, HC] = EH_iterate_mex(EC,HC,y_Lbuffer,H_lag*RSP,RSP); %test
+            [EC, HC] = EH_iterate_mex(EC,HC,y_Lbuffer,H_lag*RSP,RSP);
             
             y_Lbuffer_rs = [y_Lbuffer_rs(2:end) y_rs(i_rs)];
             %iterative E & H resampled
-            [EC_rs, HC_rs] = EH_iterate_mex(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,1); %test
+%             [EC_rs, HC_rs] = EH_iterate_mex(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,1); %test
+             [EC_rs, HC_rs] = EH_iterate_mex(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,1);
    
             HECcompare_rs = EC_rs - E_pmult.*HC_rs; %E - 2H
             %test
@@ -490,6 +494,7 @@ if(true) %H,E continuous
                     end
                 end
             end
+            %for realtime can just use a buffer if we don't want to store things
 %             if(i_rs > length(fC_tracker)) %allocate more space if needed
 %                 fC_tracker = [fC_tracker zeros(1,length(fC_tracker))];
 %                 note_tracker = [note_tracker zeros(1,length(note_tracker))];
@@ -500,8 +505,8 @@ if(true) %H,E continuous
             f_for_note_tracker = f_closest; %closest note f
             note_tracker(i_rs) = f_for_note_tracker;
             i_rs = i_rs + 1;
-            %debug graphs
-            if(debugHEgraphs && i >= debug_starti)
+            
+            if(debugHEgraphs && i >= debug_starti) %debug graphs
                 fprintf("detected f = %.2f Hz",HEC_f);
                 if(~readfile)
                     fprintf(", real f = %.2f Hz",f.*fmod_rs(i_rs));
@@ -571,7 +576,8 @@ if(true) %H,E continuous
     end
     HEcont_pd_elapsedtime = toc; %end timing
     fprintf("Continuous detection elapsed time: %.3f seconds\n",HEcont_pd_elapsedtime);
-    if(graphHEcont)
+    
+    if(graphHEcont) %detection info graphs
         HEcont_plot_x = (0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier);
         FCplot = figure('Name','EH continuous f');
             set(FCplot,'Position', [screencenter(1)-gs(1)/2 screencenter(2)-gs(2)/2+100 gs(1)*2 gs(2)]);
@@ -656,6 +662,7 @@ if(true) %H,E continuous
         %y_retunedHE = [y_retunedHE zeros(1,RSP-mod(length(y_retunedHE),RSP))]
         y_retunedHE = [y_retunedHE zeros(1,RSP)]; %just pad some zeros
     end
+    y_retunedHE = [];
     c = 1; %counter
     length_changed_check = true;
     %set below to be: > than SPP of lowest f you want autotuned
@@ -663,6 +670,7 @@ if(true) %H,E continuous
     retune_sliceRatio = 128; %resize set of points (RSP*wR) (whole number)
     retune_ratio_transpose = 1; %transpose by additional ratio
     %for loop at the end for fixed-time
+    WRTfig = figure();
     for a = 1:floor(length(ynew_rsbuffer_ratio)/retune_sliceRatio)
         retune_RSP = RSP * retune_sliceRatio;
         retune_RSP_range = 1+retune_RSP*(a-1):retune_RSP+retune_RSP*(a-1); %RSP# point ranges
@@ -692,8 +700,11 @@ if(true) %H,E continuous
         %y_retunedHE(retune_RSP_range) = retune_part;
         %supports differing lengths:
         y_retunedHE(c:c+length(retune_part)-1) = retune_part;
+        plot(c:c+length(retune_part)-1,retune_part) %plot windows in rainbow graph
+        hold on
         c = c + length(retune_part);
     end
+    %y_retunedHE = lowpass(y_retunedHE,5000,samplerate); %test
     HEcont_ps_elapsedtime = toc; %end timing
     fprintf("Continuous retuning elapsed time: %.3f seconds\nTotal time: %.3f seconds\nTotal Exec time < sample time?: %s\n",HEcont_ps_elapsedtime,HEcont_pd_elapsedtime+HEcont_ps_elapsedtime,mat2str(HEcont_pd_elapsedtime+HEcont_ps_elapsedtime < length(y)/samplerate));
     if(length(y_retunedHE) ~= length(y))
@@ -722,9 +733,8 @@ end
 % %higher SR = higher pitch, lower SR = lower pitch
 % y_retuned = y; %with diff samplerates, wave will be the same
 
-%uncomment these if you are using your own pitch-shifted wave
-y_retuned = y_retunedHE; %put wave here
-samplerate_tuned = samplerate; %restore samplerate
+y_retuned = y_retunedHE; %copy wave from HE to playback
+samplerate_tuned = samplerate;
 
 %save Y and Y_retuned to .wav files
 [~,~] = mkdir('output/');
@@ -855,7 +865,7 @@ end
 
 function [Eout, Hout] = EH_iterate_forloop(E,H,buffer,maxlag,newrange_size)
 %perform iterative calculation for E & H, with matlab vectors
-    coder.inline('always')
+    %coder.inline('always')
     buffer_len = length(buffer);
     for sN = 0:newrange_size-1 %sample number in range
         for L = 1:maxlag %lag
@@ -873,7 +883,7 @@ end
 
 function [Eout, Hout] = EH_iterate(E,H,buffer,maxlag,newrange_size)
 %perform iterative calculation for E & H, with for loop for C code gen
-    coder.inline('always')
+    %coder.inline('always')
     buffer_len = length(buffer);
     for sN = 0:newrange_size-1 %sample number in range
         L = 1:maxlag; %lag
@@ -926,7 +936,7 @@ end
 function [pks,locs] = findpeaks_fast(y)
 %custom findpeaks function much faster than stock
 %pks = y values, locs = x values (indices)
-    coder.inline('always') %force inline
+    %coder.inline('always') %force inline
     pks = zeros(1,length(y)); %allocate (faster than growing)
     locs = pks;
     if(length(y) < 3) %require at least 3 points
@@ -948,46 +958,25 @@ end
 
 function Qx = QInterp_peak(x_3, y_3)
 %finds peak of quadratic interpolation on 3 points
-    V = [1 -1 1; 0 0 1; 1 1 1]; %V for below for x_3 = -1 to 1
+    %V = [1 -1 1; 0 0 1; 1 1 1]; %V for below for x_3 = -1 to 1
     numpoints = 48; %use a decent amount of points
     %fit and evaluate ^2, a = y, x = -1 to 1 (3 points effectively)
-    pvalext = polyfitNval_fastQ(y_3,V,linspace(-1,1,numpoints),numpoints);
-    [~,plocs] = findpeaks_fast_mex(pvalext); %find the peak's x value
+    %pvalext = polyfitNval_fastQ(y_3,linspace(-1,1,numpoints),numpoints);
+    x = linspace(-1,1,numpoints);
+    
+    % Solve least squares problem.
+    p = [y_3(1)/2 - y_3(2) + y_3(3)/2,-(y_3(1)-y_3(3))/2,y_3(2)];
+    %Horner's method:
+    y_3 = x .* (x .* ones(1,numpoints) .* p(1) + p(2)) + p(3);
+    
+    [~,plocs] = findpeaks_fast_mex(y_3); %find the peak's x value
     if(isempty(plocs)) %error check
-        plocs(1) = round(max(pvalext));
+        plocs(1) = round(max(y_3));
         %fprintf("! No peak found in QI function. Set as max, bounds included\n");
     end
     Qx = plocs(1);
     %found x value of the peak between 0-N, turn back into 0-2:
     Qx = (Qx - 1) * (x_3(3) - x_3(1))/(numpoints-1) + x_3(1); %needed x value (non-integer)
-end
-
-function y = polyfitNval_fastQ(y,V,x,siz_x)
-%same as polyfit.m & polyval.m but skeleton optimized for this only
-    y = y(:); %column vector
-
-    % Solve least squares problem.
-    %Q = [-0.70711 0.70711 0; 0 0 -1; -0.70711 -0.70711 0];
-    %R = [-1.4142 -3.3307e-16 -1.4142; 0 -1.4142 0; 0 0 -1];
-    %p = R\(Q'*y); % Same as p = V\y;
-    %todo: see if this can be optimized further
-    p = V\y; %solve lineq
-
-    % if size(R,2) > size(R,1)
-    %    warning(message('MATLAB:polyfit:PolyNotUnique'))
-    % end
-
-    p = p.'; % Polynomial coefficients are row vectors by convention.
-
-    % Use Horner's method for general case where X is an array.
-    % y = zeros(1,siz_x);
-    % y(:) = p(1);
-
-    y = ones(1,siz_x) .* p(1); %this allocation seemed faster
-    for i=2:3
-        y = x .* y + p(i);
-    end
-
 end
 
 function y_new = mix(y)
@@ -1170,7 +1159,7 @@ function target_f = fetchnote_fast(x,Czero,SA_cents)
 %return closest frequency (Hz) from scale, target_f.
 %Speed designed for detection algorithm. Input Hz2Cents(scale array)
 %octave equivalency assumed
-    coder.inline('always') %force inline
+    %coder.inline('always')
     if(x <= 0) %handle bad input
         %fprintf("! fetchnote() only to be used with positive f input\n");
         target_f = 0;

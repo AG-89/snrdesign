@@ -12,16 +12,17 @@ ratio = 1.25;
 
 %graph
 figure()
-plot(length(y),y,'.-','MarkerSize',20)
-hold on
+plot(0:length(y)-1,y,'.-','MarkerSize',20)
+% hold on
+figure()
 y_new = pitch_shift_Npt_linterp(y,ratio,false);
 plot(0:length(y_new)-1,y_new,'.-','MarkerSize',20)
- 
+
 fprintf("ylen = %d, y_newlen = %d\n\n",length(y),length(y_new))
 
 
 %play
-volume = 10;
+volume = 2;
 volpeakpoint = 100/volume;
 y_toplay = [volpeakpoint repmat(y,1,ceil(samplerate*1.5/length(y)))];
 fprintf("Playing original 1.5s...\n");
