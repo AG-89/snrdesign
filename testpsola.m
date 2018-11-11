@@ -73,7 +73,7 @@ function y_out = doPSOLA(y, samplerate, N_D)
         windows = [windows; w];
         b = b + round(T_s/2) - 1; %overlap end->start point
     end
-    windows = [[zeros(1,T_s-beginning_boundary), y(1:beginning_boundary)]; windows];
+    windows = [[zeros(1,T_s-beginning_boundary), y(1:beginning_boundary)]; windows]
     
     
     y_out = y;

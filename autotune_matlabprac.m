@@ -19,7 +19,7 @@ clc, clear variables, clear sound, clear sounds, close all;
         upsample_rate = 1;
     %input file
         readfile = true; %read file or generate wave
-        filename = strcat('test','.wav'); %stereo files converted to mono
+        filename = strcat('or5 orig','.wav'); %stereo files converted to mono
     %input generation if not file
         frequency = 261.6; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
@@ -670,7 +670,7 @@ if(true) %H,E continuous
     retune_sliceRatio = 128; %resize set of points (RSP*wR) (whole number)
     retune_ratio_transpose = 1; %transpose by additional ratio
     %for loop at the end for fixed-time
-    WRTfig = figure();
+    %WRTfig = figure();
     for a = 1:floor(length(ynew_rsbuffer_ratio)/retune_sliceRatio)
         retune_RSP = RSP * retune_sliceRatio;
         retune_RSP_range = 1+retune_RSP*(a-1):retune_RSP+retune_RSP*(a-1); %RSP# point ranges
@@ -694,14 +694,19 @@ if(true) %H,E continuous
 %         retune_part = mix([retune_part;retune_part_harmonize]')';
         %notify if different # of points as input, once
         if(length(retune_part) ~= length(y(retune_RSP_range)) && length_changed_check)
-            fprintf("! Using PS method that resizes slices\n");
+            %fprintf("! Using PS method that resizes slices\n");
             length_changed_check = false;
         end
         %y_retunedHE(retune_RSP_range) = retune_part;
         %supports differing lengths:
         y_retunedHE(c:c+length(retune_part)-1) = retune_part;
-        plot(c:c+length(retune_part)-1,retune_part) %plot windows in rainbow graph
-        hold on
+        %test end of window smoothing
+        smoothingsize = 3; %0 disables?
+        if(c > smoothingsize+2 && smoothingsize > 0) %no first window
+            y_retunedHE(c-smoothingsize+1:c) = linspace(y_retunedHE(c-smoothingsize+1),y_retunedHE(c),smoothingsize);
+        end
+        %plot(c:c+length(retune_part)-1,retune_part) %plot windows in rainbow graph
+        %hold on
         c = c + length(retune_part);
     end
     %y_retunedHE = lowpass(y_retunedHE,5000,samplerate); %test
