@@ -19,7 +19,7 @@ clc, clear variables, clear sound, clear sounds, close all;
         upsample_rate = 1;
     %input file
         readfile = true; %read file or generate wave
-        filename = strcat('or5 orig','.wav'); %stereo files converted to mono
+        filename = strcat('file','.wav'); %stereo files converted to mono
     %input generation if not file
         frequency = 261.6; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
@@ -320,13 +320,13 @@ if(true) %H,E continuous
             end
 %             y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer];
             %iterative E & H
-%             [EC, HC] = EH_iterate_mex(EC,HC,y_Lbuffer,H_lag*RSP,RSP); %test
-            [EC, HC] = EH_iterate_mex(EC,HC,y_Lbuffer,H_lag*RSP,RSP);
+%             [EC, HC] = EH_iterate(EC,HC,y_Lbuffer,H_lag*RSP,RSP); %test
+            [EC, HC] = EH_iterate(EC,HC,y_Lbuffer,H_lag*RSP,RSP);
             
             y_Lbuffer_rs = [y_Lbuffer_rs(2:end) y_rs(i_rs)];
             %iterative E & H resampled
-%             [EC_rs, HC_rs] = EH_iterate_mex(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,1); %test
-             [EC_rs, HC_rs] = EH_iterate_mex(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,1);
+%             [EC_rs, HC_rs] = EH_iterate(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,1); %test
+             [EC_rs, HC_rs] = EH_iterate(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,1);
    
             HECcompare_rs = EC_rs - E_pmult.*HC_rs; %E - 2H
             %test
@@ -341,7 +341,7 @@ if(true) %H,E continuous
             %make unqualifying points have high amplitude, excluding them from Lmin
             HECcompare_rs_epsilon = HECcompare_rs.*HECcompare_rs_epsilon + ((max(HECcompare_rs)+1) .* ~HECcompare_rs_epsilon);
             %Lmin
-            [~, Lmin1C_rs_xarray] = findpeaks_fast_mex(-HECcompare_rs_epsilon(min_lag+1:end));
+            [~, Lmin1C_rs_xarray] = findpeaks_fast(-HECcompare_rs_epsilon(min_lag+1:end));
             Lmin1C_rs = Lmin1C_rs_xarray;
             if(isempty(Lmin1C_rs_xarray)) %No valley found for Lmin1C_rs. (bad)
                 error_tracker(2) = error_tracker(2) + 1;
@@ -445,7 +445,7 @@ if(true) %H,E continuous
                         %try and stop any errors
                         LminC_points_ext(LminC_points_ext > length(HECcompare)-1) = length(HECcompare)-1;
                         %determine HE_f:
-                        [~, peakC] = findpeaks_fast_mex(-HECcompare(LminC_points_ext));
+                        [~, peakC] = findpeaks_fast(-HECcompare(LminC_points_ext));
                         if(isempty(peakC)) %no valley found for LminC
                             error_tracker(5) = error_tracker(5) + 1;
                             %peakC = LminC_points_ext(end)-1; %-1 to stop indexing errors
@@ -655,22 +655,25 @@ if(true) %H,E continuous
     %samplerates for each section = ratios * original samplerate
     ynew_samplerates_modified = ones(1,length(ynew_rsbuffer_ratio)) .* samplerate .* ynew_rsbuffer_ratio;
     %y to be retuned
-    y_retunedHE = y;
-    y_retunedHE = zeros(1,length(y));
-    %make sure size of y is evenly divisible by resampling period
-    if(length(y_retunedHE)/RSP < length(ynew_rsbuffer_ratio))
-        %y_retunedHE = [y_retunedHE zeros(1,RSP-mod(length(y_retunedHE),RSP))]
-        y_retunedHE = [y_retunedHE zeros(1,RSP)]; %just pad some zeros
-    end
+%     y_retunedHE = y;
+%     y_retunedHE = zeros(1,length(y));
+%     %make sure size of y is evenly divisible by resampling period
+%     if(length(y_retunedHE)/RSP < length(ynew_rsbuffer_ratio))
+%         %y_retunedHE = [y_retunedHE zeros(1,RSP-mod(length(y_retunedHE),RSP))]
+%         y_retunedHE = [y_retunedHE zeros(1,RSP)]; %just pad some zeros
+%     end
     y_retunedHE = [];
     c = 1; %counter
-    length_changed_check = true;
-    %set below to be: > than SPP of lowest f you want autotuned
-    %128 * 8 (default spp = ds rate) = 1024 samples will be > spp of 50Hz (882).
+    %1024=8*128 sample window can shift in steps of ~2 cents
     retune_sliceRatio = 128; %resize set of points (RSP*wR) (whole number)
     retune_ratio_transpose = 1; %transpose by additional ratio
     %for loop at the end for fixed-time
-    %WRTfig = figure();
+    retune_lengthtrack = 0;
+    %harmonize test
+    retune_lengthtrack_harmonize = 0;
+    y_retunedHE_harmonize = [];
+    c_harmonize = 1;
+    harmonize = true;
     for a = 1:floor(length(ynew_rsbuffer_ratio)/retune_sliceRatio)
         retune_RSP = RSP * retune_sliceRatio;
         retune_RSP_range = 1+retune_RSP*(a-1):retune_RSP+retune_RSP*(a-1); %RSP# point ranges
@@ -688,32 +691,55 @@ if(true) %H,E continuous
             retune_RSP_range = retune_RSP_range(1):length(y);
         end
         retune_part = pitch_shift_Npt(y(retune_RSP_range),retune_ratio);
-        %harmonize test, awful with current PS method for high ratios
-%         retune_part_harmonize = pitch_shift_Npt(y(retune_RSP_range),retune_ratio*1.33);
-%         retune_part_harmonize = [retune_part_harmonize zeros(1,length(retune_part)-length(aa))];
-%         retune_part = mix([retune_part;retune_part_harmonize]')';
-        %notify if different # of points as input, once
-        if(length(retune_part) ~= length(y(retune_RSP_range)) && length_changed_check)
-            %fprintf("! Using PS method that resizes slices\n");
-            length_changed_check = false;
+        %track for length-preserving
+        retune_lengthtrack = retune_lengthtrack - length(y(retune_RSP_range));
+        while(retune_lengthtrack < 0)
+            y_retunedHE(c:c+length(retune_part)-1) = retune_part;
+            %smooth end of windows to remove buzzing
+            smoothingsize = 3; %0 disables?
+            if(c > smoothingsize+2 && smoothingsize > 0) %no first window
+                y_retunedHE(c-smoothingsize+1:c) = linspace(y_retunedHE(c-smoothingsize+1),y_retunedHE(c),smoothingsize);
+            end
+            c = c + length(retune_part);
+            retune_lengthtrack = retune_lengthtrack + length(retune_part);
         end
-        %y_retunedHE(retune_RSP_range) = retune_part;
-        %supports differing lengths:
-        y_retunedHE(c:c+length(retune_part)-1) = retune_part;
-        %test end of window smoothing
-        smoothingsize = 3; %0 disables?
-        if(c > smoothingsize+2 && smoothingsize > 0) %no first window
-            y_retunedHE(c-smoothingsize+1:c) = linspace(y_retunedHE(c-smoothingsize+1),y_retunedHE(c),smoothingsize);
+        
+        %harmonize test
+        if(harmonize)
+            retune_harmonizeratio = 1.333;
+            %scale harmonization to maybe fix in the future
+%             hsi = mean(note_tracker_cents(retune_ratio_sRrange))
+%             [~,harmonize_scaleindex] = min(abs(scale_ARRAY_cents - mod(hsi,1200)))
+%             harmonize_scaleindex = mod(harmonize_scaleindex+2,length(scale_ARRAY)) + 1;
+%             retune_harmonizeratio = scale_ARRAY(harmonize_scaleindex)
+            
+            retune_part_harmonize = pitch_shift_Npt(y(retune_RSP_range),retune_ratio*retune_harmonizeratio);
+            retune_lengthtrack_harmonize = retune_lengthtrack_harmonize - length(y(retune_RSP_range));
+            while(retune_lengthtrack_harmonize < length(y(retune_RSP_range)))
+                y_retunedHE_harmonize(c_harmonize:c_harmonize+length(retune_part_harmonize)-1) = retune_part_harmonize;
+                %smooth end of windows to remove buzzing
+                smoothingsize = 3; %0 disables?
+                if(c_harmonize > smoothingsize+2 && smoothingsize > 0) %no first window
+                    y_retunedHE_harmonize(c_harmonize-smoothingsize+1:c_harmonize) = linspace(y_retunedHE_harmonize(c_harmonize-smoothingsize+1),y_retunedHE_harmonize(c_harmonize),smoothingsize);
+                end
+                c_harmonize = c_harmonize + length(retune_part_harmonize);
+                retune_lengthtrack_harmonize = retune_lengthtrack_harmonize + length(retune_part_harmonize);
+            end
         end
-        %plot(c:c+length(retune_part)-1,retune_part) %plot windows in rainbow graph
-        %hold on
-        c = c + length(retune_part);
     end
-    %y_retunedHE = lowpass(y_retunedHE,5000,samplerate); %test
+    %harmonize mixing
+    if(harmonize)
+        y_retunedHE_harmonize_mix = y_retunedHE_harmonize; %mixed final product
+        if(length(y_retunedHE_harmonize) < length(y_retunedHE))
+            y_retunedHE_harmonize_mix = [y_retunedHE_harmonize zeros(1,length(y_retunedHE)-length(y_retunedHE_harmonize))];
+        end
+        y_retunedHE_harmonize_mix = y_retunedHE_harmonize_mix(1:length(y_retunedHE));
+        y_retunedHE_harmonize_mix = mix([y_retunedHE;y_retunedHE_harmonize_mix]')';
+    end
     HEcont_ps_elapsedtime = toc; %end timing
     fprintf("Continuous retuning elapsed time: %.3f seconds\nTotal time: %.3f seconds\nTotal Exec time < sample time?: %s\n",HEcont_ps_elapsedtime,HEcont_pd_elapsedtime+HEcont_ps_elapsedtime,mat2str(HEcont_pd_elapsedtime+HEcont_ps_elapsedtime < length(y)/samplerate));
     if(length(y_retunedHE) ~= length(y))
-        fprintf("! Final PS wave different size than input. Sample difference = %d\n",length(y)-length(y_retunedHE));
+        fprintf("Output sample difference = %d\n",length(y_retunedHE)-length(y));
     end
     %graph
     if(true)
@@ -723,7 +749,7 @@ if(true) %H,E continuous
         end
       subplot(1,1,1)
         set(Retunedplot,'Position', [screencenter(1)-gs(1)/2-gs(1) screencenter(2)-gs(2)/2+100-gs(2)/2 gs(1) gs(2)]);
-        plot((0:length(y_retunedHE)-1).*(xTimeUnits_modifier),y_retunedHE,'.-','MarkerSize',MarkerSizeTiny,'Color',graphcolors(4,:));
+        plot((0:length(y_retunedHE_harmonize)-1).*(xTimeUnits_modifier),y_retunedHE_harmonize,'.-','MarkerSize',MarkerSizeTiny,'Color',graphcolors(4,:));
         %xlim([0 xlim_x])
         title("y retuned" + soundedStr)
         ylim(ylimits)
@@ -745,6 +771,10 @@ samplerate_tuned = samplerate;
 [~,~] = mkdir('output/');
 audiowrite('output/Y.wav',y,samplerate);
 audiowrite('output/Y_retuned.wav',y_retuned,samplerate);
+if(harmonize)
+    audiowrite('output/Y_rtharmonize_part.wav',y_retunedHE_harmonize,samplerate);
+    audiowrite('output/Y_rtharmonized.wav',y_retunedHE_harmonize_mix,samplerate);
+end
 fprintf("\n")
 
 if(playsounds) %plays the sounds
@@ -807,7 +837,7 @@ function [x, R, fR, fR_QI] = handle_R(y,lags,readfile,f,samplerate,resample_rate
         resample_rate = 1;
     end
     x = 0:length(R)-1; %create x values
-    [~,locs] = findpeaks_fast_mex(R); %find the peaks' x locations
+    [~,locs] = findpeaks_fast(R); %find the peaks' x locations
     if(isempty(locs)) %check if no 2nd peak (invalid R reading)
         locs(1) = length(R);
         fprintf("! No valid R peak detected. Set as right bound (need more samples?)\n");%,locs(1));
@@ -974,7 +1004,7 @@ function Qx = QInterp_peak(x_3, y_3)
     %Horner's method:
     y_3 = x .* (x .* ones(1,numpoints) .* p(1) + p(2)) + p(3);
     
-    [~,plocs] = findpeaks_fast_mex(y_3); %find the peak's x value
+    [~,plocs] = findpeaks_fast(y_3); %find the peak's x value
     if(isempty(plocs)) %error check
         plocs(1) = round(max(y_3));
         %fprintf("! No peak found in QI function. Set as max, bounds included\n");
