@@ -7,7 +7,7 @@ clc, clear variables, clear sound, clear sounds, close all;
     samplerate = 44100; %sample rate
     global A4freq; A4freq = 440; %Freq (Hz) for note A4
     
-    scale_name = '12edo'; %scales listing in below section
+    scale_name = 'major'; %scales listing in below section
 
 %control
     %detection parameters
@@ -23,7 +23,7 @@ clc, clear variables, clear sound, clear sounds, close all;
     %input generation if not file
         frequency = 261.6; %f to generate (Hz)
         fixedlength = true; %generate fixed seconds
-            secondslength = 1; %number of seconds length to generate
+            secondslength = 2; %number of seconds length to generate
             pcount = 30; %number of periods to generate otherwise
     %playback
         playsounds = false;
@@ -666,16 +666,31 @@ if(true) %H,E continuous
     c = 1; %counter
     %1024=8*128 sample window can shift in steps of ~2 cents
     retune_sliceRatio = 128; %resize set of points (RSP*wR) (whole number)
-    retune_ratio_transpose = 1; %transpose by additional ratio
-    %for loop at the end for fixed-time
+    retune_RSP = RSP * retune_sliceRatio; %actual window size
     retune_lengthtrack = 0;
+    %move these to control vars after good testing
+    retune_ratio_transpose = 1; %transpose by additional ratio
+    %vibrato test w/ LFO
+    vibrato = false; %use vibrato defined below
+    VibLFO_f = 6; %Hz
+    VibLFO_f_A = 2^(0.25/12); %vibrato pitch modifier
+        VibLFO = sin(2*pi*VibLFO_f.*x/samplerate);
+        %this formula is copy pasted from fmod section:
+        VibLFO = (VibLFO_f_A)^-1 + VibLFO_f_A .* (VibLFO_f_A-VibLFO_f_A^-1)/VibLFO_f_A .* 1/2 .*(VibLFO+1);
+    %delay test
+    %for delay & harmonize, track note and scale degree with fC_tracker
+    %try delay with rate constraint:
+    %test this behavior well
+    delay = true;
+    delay_tracker = 0;
+    %max change in cents per second
+    delay_maxchangerate_cents = 800 * retune_RSP / samplerate;
     %harmonize test
     retune_lengthtrack_harmonize = 0;
     y_retunedHE_harmonize = [];
     c_harmonize = 1;
     harmonize = true;
     for a = 1:floor(length(ynew_rsbuffer_ratio)/retune_sliceRatio)
-        retune_RSP = RSP * retune_sliceRatio;
         retune_RSP_range = 1+retune_RSP*(a-1):retune_RSP+retune_RSP*(a-1); %RSP# point ranges
         %use pitch shift function for each set of points
         retune_ratio = ynew_rsbuffer_ratio(a*retune_sliceRatio) .* retune_ratio_transpose;
@@ -685,6 +700,19 @@ if(true) %H,E continuous
                 retune_ratio_sRrange = retune_ratio_sRrange(1):length(ynew_rsbuffer_ratio);
             end
             retune_ratio = mean(ynew_rsbuffer_ratio(retune_ratio_sRrange) .* retune_ratio_transpose);
+        end
+        %delay test
+        if(delay)
+            delayt_cents = Hz2Cents(retune_ratio,0,scale_name,scalemap);
+            if(abs(delayt_cents) - abs(delay_tracker) > delay_maxchangerate_cents)
+                delayt_cents = sign(delayt_cents) * (delay_tracker + delay_maxchangerate_cents);
+            end
+            delay_tracker = delayt_cents
+            retune_ratio = Cents2Hz(delayt_cents,0,scale_name,scalemap);
+        end
+        %vibrato test
+        if(vibrato)
+            retune_ratio = retune_ratio * VibLFO(retune_RSP * a);
         end
         %perform the actual pitch shifting of the slice
         if(retune_RSP_range(end) > length(y)) %stop array index OOB
