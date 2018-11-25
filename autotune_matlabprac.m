@@ -275,8 +275,11 @@ if(true) %H,E continuous
     HC_rs = EC_rs;
     EC = zeros(1,H_lag*resample_period);
     HC = EC;
+    HECcompare = EC;
     EH_IR_low = 1; % E&H points updated last cycle
     EH_IR_high = 1;
+    EH_IR_low_last = EH_IR_low;
+    EH_IR_high_last = EH_IR_high;
     %for fetchnote_fastf
     scale_ARRAY_cents = 1200.*log([1 scale_ARRAY])./log(2);
     %values from previous detection cycle
@@ -329,26 +332,16 @@ if(true) %H,E continuous
                 end
             end
 %             y_Lbuffer = [y_Lbuffer(1+resample_period:end) y_smallbuffer];
+            EHC_calc_Lbuffer = y_Lbuffer(end-(E_lag*RSP-1):end);
+            %[EC, HC] = EH_iterate(EC,HC,y_Lbuffer,H_lag*RSP,0,RSP); %full
             
-            %new specified iteration ranges
-            %RSP*3/2 size range should be sufficient
-%             EH_IR_low = LminC_last - RSP*3/4;
-%             EH_IR_high = LminC_last + RSP*3/4;
-%             if(EH_IR_low < 1) %clip bounds, stop errors
-%                 EH_IR_low = 1;
-%             end
-%             if(EH_IR_high > H_lag*RSP) %clip bounds, stop errors
-%                 EH_IR_high = H_lag*RSP;
-%             end
-%             finishme;;;;
-            %iterative E & H
-            [EC, HC] = EH_iterate(EC,HC,y_Lbuffer,H_lag*RSP,0,RSP);
-            
+            %resampled part
             y_Lbuffer_rs = [y_Lbuffer_rs(2:end) y_rs(i_rs)];
             %iterative E & H resampled
-             [EC_rs, HC_rs] = EH_iterate(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,0,1);
-   
-            HECcompare_rs = EC_rs - E_pmult.*HC_rs; %E - 2H
+            [EC_rs, HC_rs] = EH_iterate(EC_rs,HC_rs,y_Lbuffer_rs,H_lag,0,1);
+
+            %E - 2H resampled
+            HECcompare_rs = EC_rs - E_pmult.*HC_rs; 
             %test
 %             AC_rs = autoc(y_Lbuffer_rs(end-(E_lag-1):end),H_lag,0);
 %             HECcompare_rs = -AC_rs;
@@ -385,22 +378,14 @@ if(true) %H,E continuous
             end 
             detectNewLmin = true;
             %don't do anything further if Lmin won't change
-            if(usetimesavers && Lmin1C_rs == Lmin1C_rs_last && Lmin2C_rs == Lmin2C_rs_last)
-                detectNewLmin = false;
-            end
             Lmin1C_rs_last = Lmin1C_rs;
             Lmin2C_rs_last = Lmin2C_rs;
             if(detectNewLmin) %transfer to non-resampled H & E
                 Lmin1C = (Lmin1C_rs)*resample_period;
                 Lmin2C = (Lmin2C_rs)*RSP;
-                %non-iterative E & H calculation
-                %gives a slightly different result for some reason
-                %todo: test and refine the calcE/H functions, even more...
-                %also todo: test mex file gen, do above first
-                %if full autoc can be used that would be nice
+                %totally non-iterative E & H calculation, to be deleted?
                 if(false)
                     %len: = E_lag*resample_period+RSP
-                    EHC_calc_Lbuffer = y_Lbuffer(end-(E_lag*RSP-1):end);
                     EC = ones(1,length(EC));
                     HC = ones(1,length(HC));
                     %get ranges to calculate
@@ -428,12 +413,68 @@ if(true) %H,E continuous
                     EC(1:length(EC)-1 < EHC_rL1(1)) = EC(EHC_rL1(1));
                     EC(1:length(EC)-1 > EHC_rL2(end)) = EC(EHC_rL2(end));
                     EC(1:length(EC)-1 > EHC_rL1(end) & 1:length(EC)-1 < EHC_rL2(1)) = EC(EHC_rL2(1));
-                    HC(1:length(EC)-1 < EHC_rL1(1)) = HC(EHC_rL1(1));
-                    HC(1:length(EC)-1 > EHC_rL2(end)) = HC(EHC_rL2(end));
-                    HC(1:length(EC)-1 > EHC_rL1(end) & 1:length(HC)-1 < EHC_rL2(1)) = HC(EHC_rL2(1));
+                    HC(1:length(HC)-1 < EHC_rL1(1)) = HC(EHC_rL1(1));
+                    HC(1:length(HC)-1 > EHC_rL2(end)) = HC(EHC_rL2(end));
+                    HC(1:length(HC)-1 > EHC_rL1(end) & 1:length(HC)-1 < EHC_rL2(1)) = HC(EHC_rL2(1));
                     end
                 end
-                HECcompare = EC - E_pmult.*HC; %E-2H
+                %force calculate both LminC's, but don't store
+                EC_Lmin1C = calcE(EHC_calc_Lbuffer,Lmin1C,Lmin1C-1);
+                HC_Lmin1C = calcH(EHC_calc_Lbuffer,Lmin1C,Lmin1C-1);
+                EC_Lmin2C = calcE(EHC_calc_Lbuffer,Lmin2C,Lmin2C-1);
+                HC_Lmin2C = calcH(EHC_calc_Lbuffer,Lmin2C,Lmin2C-1);
+                %select final Lmin to use in H
+                HECcompare_Lmin1C = EC_Lmin1C - E_pmult.*HC_Lmin1C;
+                HECcompare_Lmin2C = EC_Lmin2C - E_pmult.*HC_Lmin2C;
+                LminC = Lmin1C;
+                 if(Lmin1C_rs < lags/2 && HECcompare_Lmin2C < HECcompare_Lmin1C)
+                     LminC = Lmin2C;
+                 end
+                %calculate new E & H after Lmin now
+                %new specified iteration range
+                %RSP*3/2 size range should be sufficient
+                EH_IR_low = LminC_last - RSP*3/4;
+                EH_IR_high = LminC_last + RSP*3/4;
+                if(EH_IR_low < 1) %clip bounds, stop errors
+                    EH_IR_low = 1;
+                end
+                if(EH_IR_high > H_lag*RSP) %clip bounds, stop errors
+                    EH_IR_high = H_lag*RSP;
+                end
+                %force calculate any new part of the range
+                EH_IR_recalc = false; %recalc the whole range if it moved far
+                EH_IR_hlb = EH_IR_high_last+1; %_high lower bound
+                EH_IR_lub = EH_IR_low_last-1; %_low upper bound
+                if(EH_IR_high - EH_IR_high_last >= RSP*3/2 || EH_IR_low_last - EH_IR_low >= RSP*3/2)
+                    EH_IR_recalc = true;
+                end
+                if(~EH_IR_recalc) %only calc the new part
+                    if(EH_IR_high > EH_IR_high_last)
+                        EC(EH_IR_hlb:EH_IR_high) = calcE(EHC_calc_Lbuffer,EH_IR_high,EH_IR_hlb-1);
+                        HC(EH_IR_hlb:EH_IR_high) = calcH(EHC_calc_Lbuffer,EH_IR_high,EH_IR_hlb-1);
+                    end
+                    if(EH_IR_low < EH_IR_low_last)
+                        EC(EH_IR_low:EH_IR_lub) = calcE(EHC_calc_Lbuffer,EH_IR_lub,EH_IR_low-1);
+                        HC(EH_IR_low:EH_IR_lub) = calcH(EHC_calc_Lbuffer,EH_IR_lub,EH_IR_low-1);
+                    end
+                else %recalc the whole range
+                    EC(EH_IR_low:EH_IR_high) = calcE(EHC_calc_Lbuffer,EH_IR_high,EH_IR_low-1);
+                    HC(EH_IR_low:EH_IR_high) = calcH(EHC_calc_Lbuffer,EH_IR_high,EH_IR_low-1);
+                end
+                %iterative E & H
+                if(~EH_IR_recalc)
+                    [EC, HC] = EH_iterate(EC,HC,y_Lbuffer,EH_IR_high_last,EH_IR_low_last-1,RSP);
+                end
+                %replace old junk values outside new range
+                EC(1:EH_IR_low) = EC(EH_IR_low);
+                HC(1:EH_IR_low) = HC(EH_IR_low);
+                EC(EH_IR_high:end) = EC(EH_IR_high);
+                HC(EH_IR_high:end) = HC(EH_IR_high);
+                %store iteration range
+                EH_IR_low_last = EH_IR_low;
+                EH_IR_high_last = EH_IR_high;
+                %E-2H
+                HECcompare = EC - E_pmult.*HC;
                 %HECcompare = -AC; %test
                 if(~isrow(HECcompare)) %to row vector
                     HECcompare = HECcompare';
@@ -442,66 +483,29 @@ if(true) %H,E continuous
                     error_tracker(4) = error_tracker(4) + 1;
                     %also doesn't seem to matter
                 end
-                LminC = Lmin1C; %select final Lmin to use in H
-                %can give wrong harmonic? try comparing local minimums instead
-                %check inequality signs
-                 if(Lmin1C_rs < lags/2 && HECcompare(Lmin2C) < HECcompare(Lmin1C))
-                     LminC = Lmin2C;
-                 end
+                
                 detectNewPitch = true;
-                if(usetimesavers && LminC == LminC_last) %don't run Qinterp if the pitch didn't change
-                    detectNewPitch = false;
-                end
+                %removed local minimum comparison for the new optimization
                 if(detectNewPitch) %detect pitch from valley near Lmin
                     %use large range of points around Lmin to find valley
-                    %todo: later write function to find the valley using n points
-                    for k = 0:1 %do for Lmin 1 & 2 and then compare
-                        if(k == 0)%1 & 2 part
-                            LminC = Lmin2C;
-                        else
-                            LminC = Lmin1C;
-                        end
-                        LminC_points = (LminC)-RSP/2+1:(LminC)+RSP/2; %get range of RSP points
-                        LminC_points_ext = (LminC)-RSP*3/4+1:(LminC)+RSP*3/4; %extended range
-                        %try and stop any errors
-                        LminC_points_ext(LminC_points_ext > length(HECcompare)-1) = length(HECcompare)-1;
-                        %determine HE_f:
-                        [~, peakC] = findpeaks_fast_num(-HECcompare(LminC_points_ext),1);
-                        if(isempty(peakC)) %no valley found for LminC
-                            error_tracker(5) = error_tracker(5) + 1;
-                            %peakC = LminC_points_ext(end)-1; %-1 to stop indexing errors
-                            peakC = peakC_last;
-                        else
-                            peakC = LminC_points_ext(peakC(1)); %no shift -1 needed
-                        end
-                        peaknfriendsC = [peakC-1,peakC,peakC+1]; %array of 3 points
-                        if(k == 0)%1 & 2 part
-                            peakC2 = peakC;
-                            peaknfriendsC2 = peaknfriendsC;
-                            LminC_points_ext2 = LminC_points_ext;
-                        else
-                            peakC1 = peakC;
-                            peaknfriendsC1 = peaknfriendsC;
-                            LminC_points_ext1 = LminC_points_ext;
-                        end
+                    LminC_points = (LminC)-RSP/2+1:(LminC)+RSP/2; %get range of RSP points
+                    LminC_points_ext = (LminC)-RSP*3/4+1:(LminC)+RSP*3/4; %extended range
+                    %try and stop any errors
+                    LminC_points_ext(LminC_points_ext > length(HECcompare)-1) = length(HECcompare)-1;
+                    %determine HE_f:
+                    [~, peakC] = findpeaks_fast_num(-HECcompare(LminC_points_ext),1);
+                    if(isempty(peakC)) %no valley found for LminC
+                        error_tracker(5) = error_tracker(5) + 1;
+                        %peakC = LminC_points_ext(end)-1; %-1 to stop indexing errors
+                        peakC = peakC_last;
+                    else
+                        peakC = LminC_points_ext(peakC(1)); %no shift -1 needed
                     end
-                    %now set the real Lmin and use its valley
-                    if(Lmin1C_rs < lags/2 && HECcompare(peakC2) <= HECcompare(peakC1))
-                        %use Lmin2 stuff if its valley is lower
-                         LminC = Lmin2C;
-                         peakC = peakC2;
-                         peaknfriendsC = peaknfriendsC2;
-                    end
-                    %use first valley (higher f) if both are close
-%                     if(abs(HECcompare(peakC2) - HECcompare(peakC1)) < 1)
-%                         LminC = Lmin1C;
-%                          peakC = peakC1;
-%                          peaknfriendsC = peaknfriendsC1;
-%                     end
+                    peaknfriendsC = [peakC-1,peakC,peakC+1]; %array of 3 points
                     LminC_last = LminC;
                     LminC_rs = LminC * resample_rate;
-                    %no shift left -1 needed due to above peakC indexing
-                    HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-0; %QI
+                    %-1 shift may be needed again
+                    HEC_spp = QInterp_peak(peaknfriendsC,-HECcompare(peaknfriendsC))-1; %QI
                     HEC_p = HEC_spp/samplerate;
                     HEC_f = samplerate/(HEC_spp); %detected f
                     f_closest = fetchnote_fast(HEC_f,Czero,scale_ARRAY_cents);
@@ -598,7 +602,146 @@ if(true) %H,E continuous
     HEcont_pd_elapsedtime = toc; %end timing
     fprintf("Continuous detection elapsed time: %.3f seconds\n",HEcont_pd_elapsedtime);
     
-    if(graphHEcont) %detection info graphs
+%% pitch shifting
+    tic; %time
+    %samplerates for each section = ratios * original samplerate
+    ynew_samplerates_modified = ones(1,length(ynew_rsbuffer_ratio)) .* samplerate .* ynew_rsbuffer_ratio;
+    %y to be retuned
+%     y_retunedHE = y;
+%     y_retunedHE = zeros(1,length(y));
+%     %make sure size of y is evenly divisible by resampling period
+%     if(length(y_retunedHE)/RSP < length(ynew_rsbuffer_ratio))
+%         %y_retunedHE = [y_retunedHE zeros(1,RSP-mod(length(y_retunedHE),RSP))]
+%         y_retunedHE = [y_retunedHE zeros(1,RSP)]; %just pad some zeros
+%     end
+    y_retunedHE = [];
+    c = 1; %counter
+    %1024=8*128 sample window can shift in steps of ~2 cents
+    retune_sliceRatio = 128; %resize set of points (RSP*wR) (whole number)
+    retune_RSP = RSP * retune_sliceRatio; %actual window size
+    retune_lengthtrack = 0;
+    retune_ratio_transpose = Cents2Hz(transpose_cents,0,scale_name,scalemap);
+    middle_old = 0;
+    %simple vibrato w/ LFO (no fC_tracker)
+    VibLFO_f = vibrato_frequency; %Hz
+    VibLFO_f_A_cents = vibrato_M_cents; %vibrato pitch modifier in cents
+    VibLFO = sin(2*pi*VibLFO_f.*x/samplerate);
+    VibLFO_f_A = Cents2Hz(VibLFO_f_A_cents,0,scale_name,scalemap);
+    %this formula is copy pasted from fmod section:
+    VibLFO = (VibLFO_f_A)^-1 + VibLFO_f_A .* (VibLFO_f_A-VibLFO_f_A^-1)/VibLFO_f_A .* 1/2 .*(VibLFO+1);
+    %delay implementation without using fC_tracker
+    delay_tracker = 0;
+    %max change in cents per second
+    delay_maxchangerate_cents_persecond = delay_maxchangerate_cents * retune_RSP / samplerate;
+    %harmonize test
+    retune_lengthtrack_harmonize = 0;
+    y_retunedHE_harmonize = [];
+    c_harmonize = 1;
+    middle_harmonize_old = 0;
+    for a = 1:(floor(length(ynew_rsbuffer_ratio)/retune_sliceRatio))*2-1
+        start = 1+retune_RSP/2*(a-1);
+        retune_RSP_range = start:start+retune_RSP-1; %RSP# point ranges
+        %use pitch shift function for each set of points
+        %retune_ratio = ynew_rsbuffer_ratio(a*retune_sliceRatio) .* retune_ratio_transpose;
+        if(retune_sliceRatio > 1) %try out averaging the PS ratio over the slice
+            retune_ratio_sRrange_start = 1+retune_sliceRatio/2*(a-1);
+            retune_ratio_sRrange = retune_ratio_sRrange_start:retune_sliceRatio+retune_ratio_sRrange_start-1;
+            if(retune_ratio_sRrange(end) > length(ynew_rsbuffer_ratio)) %stop errors
+                retune_ratio_sRrange = retune_ratio_sRrange(1):length(ynew_rsbuffer_ratio);
+            end
+            retune_ratio = mean(ynew_rsbuffer_ratio(retune_ratio_sRrange) .* retune_ratio_transpose);
+            retune_note = mean(fC_tracker(retune_ratio_sRrange)); %get the note
+            retune_note_cents = Hz2Cents(retune_note,A4,scale_name,scalemap);
+        end
+        %delay
+        if(delay)
+            delayt_cents = Hz2Cents(retune_ratio,0,scale_name,scalemap);
+            %clamp any pitch shift amount above the limit per window
+            if(abs(delayt_cents) - abs(delay_tracker) > delay_maxchangerate_cents_persecond)
+                delayt_cents = sign(delayt_cents) * (delay_tracker + delay_maxchangerate_cents_persecond);
+            end
+            delay_tracker = delayt_cents; %adjust new start point (now at 0)
+            retune_ratio = Cents2Hz(delayt_cents,0,scale_name,scalemap);
+        end
+        %vibrato
+        if(vibrato)
+            retune_ratio = retune_ratio * VibLFO(retune_RSP * a);
+        end
+        %windowing function
+        %window_func = bartlett(length(retune_RSP_range)); %triang
+        window_func = hann(length(retune_RSP_range)); %hann
+        %window_funct = window_funct(2:end-1);
+        %actual pitch shift by length change & lerp
+        if(retune_RSP_range(end) > length(y)) %stop array index OOB
+            retune_RSP_range = retune_RSP_range(1):length(y);
+            window_func = window_func(1):length(y);
+        end
+        retune_part_pre = y(retune_RSP_range) .* window_func'; %apply WF
+        retune_part = pitch_shift_Npt(retune_part_pre,retune_ratio); %PS
+        middle = floor(length(retune_part)/2); %center of new window
+        %track for length-preserving
+        retune_lengthtrack = retune_lengthtrack - floor(retune_RSP/2);
+        while(retune_lengthtrack < 0)
+            %Overlap Add
+            edge = c+length(retune_part)-1;
+            if(length(y_retunedHE) < edge)
+                y_retunedHE = [y_retunedHE zeros(1,1+2^15)]; %allocate more
+            end
+            y_retunedHE(c:edge) = retune_part + y_retunedHE(c:edge);
+            c = c + middle;%length(retune_part);
+            retune_lengthtrack = retune_lengthtrack + length(retune_part) - middle_old;
+        end
+        middle_old = middle;
+        
+        %harmonize test
+        if(harmonize)
+            %fixed ratio
+            retune_harmonizeratio_fixed = 1.33;
+            %scale harmonization, doesnt support like any scales yet
+            scale_steps = 2; %scale steps up to harmonize
+                [~,hsi] = min(abs(scale_ARRAY_cents - mod(retune_note_cents,1200)));
+                hsi = mod(hsi-1-1,length(scale_ARRAY)) + 1;
+                hsi_h = hsi + scale_steps;
+                hsi_octave = ceil(hsi_h/length(scale_ARRAY));
+                hsi_h = mod(hsi_h-1,length(scale_ARRAY)) + 1;
+                retune_harmonizeratio_scale = scale_ARRAY(hsi_h)/scale_ARRAY(hsi) * hsi_octave;
+            %select which harmonization to use
+            retune_harmonizeratio = retune_harmonizeratio_fixed;
+            %same calculations as before
+            retune_part_harmonize = pitch_shift_Npt(retune_part_pre,retune_ratio*retune_harmonizeratio);
+            middle_harmonize = floor(length(retune_part_harmonize)/2); %center of new window
+            retune_lengthtrack_harmonize = retune_lengthtrack_harmonize - floor(retune_RSP/2);
+            while(retune_lengthtrack_harmonize < 0)
+                %Overlap Add
+                edge_harmonize = c_harmonize+length(retune_part_harmonize)-1;
+                if(length(y_retunedHE_harmonize) < edge_harmonize)
+                    y_retunedHE_harmonize = [y_retunedHE_harmonize zeros(1,1+2^15)];  %allocate more
+                end
+                y_retunedHE_harmonize(c_harmonize:edge_harmonize) = retune_part_harmonize + y_retunedHE_harmonize(c_harmonize:edge_harmonize);
+                c_harmonize = c_harmonize + middle_harmonize;
+                retune_lengthtrack_harmonize = retune_lengthtrack_harmonize + length(retune_part_harmonize) - middle_harmonize_old;
+            end
+            middle_harmonize_old = middle_harmonize;
+        end
+    end
+    %clip off trailing zeros & normalize to [-1,1]
+    y_retunedHE = normalize(y_retunedHE(1:edge));
+    %harmonize mixing
+    if(harmonize)
+        y_retunedHE_harmonize = normalize(y_retunedHE_harmonize(1:edge_harmonize));
+        y_retunedHE_harmonize_mix = y_retunedHE_harmonize; %mixed final product
+        if(length(y_retunedHE_harmonize) < length(y_retunedHE))
+            y_retunedHE_harmonize_mix = [y_retunedHE_harmonize zeros(1,length(y_retunedHE)-length(y_retunedHE_harmonize))];
+        end
+        y_retunedHE_harmonize_mix = y_retunedHE_harmonize_mix(1:length(y_retunedHE));
+        y_retunedHE_harmonize_mix = mix([y_retunedHE;y_retunedHE_harmonize_mix]')';
+    end
+    HEcont_ps_elapsedtime = toc; %end timing
+    fprintf("Continuous retuning elapsed time: %.3f seconds\nTotal time: %.3f seconds\nTotal Exec time < sample time?: %s\n",HEcont_ps_elapsedtime,HEcont_pd_elapsedtime+HEcont_ps_elapsedtime,mat2str(HEcont_pd_elapsedtime+HEcont_ps_elapsedtime < length(y)/samplerate));
+    fprintf("Output sample difference = %d\n",length(y_retunedHE)-length(y));
+%% graph results
+    if(graphHEcont) %graph H & E detection results
+    %detection info graphs
         HEcont_plot_x = (0:length(fC_tracker)-1).*resample_period.*(xTimeUnits_modifier);
         FCplot = figure('Name','EH continuous f');
             set(FCplot,'Position', [screencenter(1)-gs(1)/2 screencenter(2)-gs(2)/2+100 gs(1)*2 gs(2)]);
@@ -653,9 +796,7 @@ if(true) %H,E continuous
                 title("f error in cents octave reduced")
                 ylim([-600 600])
          end
-    end
-%% pitch shifting
-    if(true) %graph the two pitch shifting buffers
+    %pitch shifting graphs
     PSplot = figure('Name','Pitch shifting EH');
         PSplot_x = (0:length(ynew_rsbuffer_ratio)-1).*resample_period.*(xTimeUnits_modifier);
         ynew_rsbuffer_ratio_cents = Hz2Cents(ynew_rsbuffer_ratio,0,scale_name,scalemap);
@@ -672,147 +813,7 @@ if(true) %H,E continuous
             title("ratios of f")
             ylim([abs(max(ynew_rsbuffer_ratio))^-1 abs(max(ynew_rsbuffer_ratio))])
     end
-    tic; %time
-    %samplerates for each section = ratios * original samplerate
-    ynew_samplerates_modified = ones(1,length(ynew_rsbuffer_ratio)) .* samplerate .* ynew_rsbuffer_ratio;
-    %y to be retuned
-%     y_retunedHE = y;
-%     y_retunedHE = zeros(1,length(y));
-%     %make sure size of y is evenly divisible by resampling period
-%     if(length(y_retunedHE)/RSP < length(ynew_rsbuffer_ratio))
-%         %y_retunedHE = [y_retunedHE zeros(1,RSP-mod(length(y_retunedHE),RSP))]
-%         y_retunedHE = [y_retunedHE zeros(1,RSP)]; %just pad some zeros
-%     end
-    y_retunedHE = [];
-    c = 1; %counter
-    %1024=8*128 sample window can shift in steps of ~2 cents
-    retune_sliceRatio = 128; %resize set of points (RSP*wR) (whole number)
-    retune_RSP = RSP * retune_sliceRatio; %actual window size
-    retune_lengthtrack = 0;
-    retune_ratio_transpose = Cents2Hz(transpose_cents,0,scale_name,scalemap);
-    %simple vibrato w/ LFO (no fC_tracker)
-    VibLFO_f = vibrato_frequency; %Hz
-    VibLFO_f_A_cents = vibrato_M_cents; %vibrato pitch modifier in cents
-    VibLFO = sin(2*pi*VibLFO_f.*x/samplerate);
-    VibLFO_f_A = Cents2Hz(VibLFO_f_A_cents,0,scale_name,scalemap);
-    %this formula is copy pasted from fmod section:
-    VibLFO = (VibLFO_f_A)^-1 + VibLFO_f_A .* (VibLFO_f_A-VibLFO_f_A^-1)/VibLFO_f_A .* 1/2 .*(VibLFO+1);
-    %delay implementation without using fC_tracker
-    delay_tracker = 0;
-    %max change in cents per second
-    delay_maxchangerate_cents_persecond = delay_maxchangerate_cents * retune_RSP / samplerate;
-    %harmonize test
-    retune_lengthtrack_harmonize = 0;
-    y_retunedHE_harmonize = [];
-    c_harmonize = 1;
-    for a = 1:(floor(length(ynew_rsbuffer_ratio)/retune_sliceRatio))*2-1
-        start = 1+retune_RSP/2*(a-1);
-        retune_RSP_range = start:start+retune_RSP-1; %RSP# point ranges
-        %use pitch shift function for each set of points
-        %retune_ratio = ynew_rsbuffer_ratio(a*retune_sliceRatio) .* retune_ratio_transpose;
-        if(retune_sliceRatio > 1) %try out averaging the PS ratio over the slice
-            retune_ratio_sRrange_start = 1+retune_sliceRatio/2*(a-1);
-            retune_ratio_sRrange = retune_ratio_sRrange_start:retune_sliceRatio+retune_ratio_sRrange_start-1;
-            if(retune_ratio_sRrange(end) > length(ynew_rsbuffer_ratio)) %stop errors
-                retune_ratio_sRrange = retune_ratio_sRrange(1):length(ynew_rsbuffer_ratio);
-            end
-            retune_ratio = mean(ynew_rsbuffer_ratio(retune_ratio_sRrange) .* retune_ratio_transpose);
-            retune_note = mean(fC_tracker(retune_ratio_sRrange)); %get the note
-            retune_note_cents = Hz2Cents(retune_note,A4,scale_name,scalemap);
-        end
-        %delay
-        if(delay)
-            delayt_cents = Hz2Cents(retune_ratio,0,scale_name,scalemap);
-            %clamp any pitch shift amount above the limit per window
-            if(abs(delayt_cents) - abs(delay_tracker) > delay_maxchangerate_cents_persecond)
-                delayt_cents = sign(delayt_cents) * (delay_tracker + delay_maxchangerate_cents_persecond);
-            end
-            delay_tracker = delayt_cents; %adjust new start point (now at 0)
-            retune_ratio = Cents2Hz(delayt_cents,0,scale_name,scalemap);
-        end
-        %vibrato
-        if(vibrato)
-            retune_ratio = retune_ratio * VibLFO(retune_RSP * a);
-        end
-        %windowing function
-        window_func = bartlett(length(retune_RSP_range)); %triang
-        window_func = hann(length(retune_RSP_range)); %hann
-        %window_funct = window_funct(2:end-1);
-        %actual pitch shift by length change & lerp
-        if(retune_RSP_range(end) > length(y)) %stop array index OOB
-            retune_RSP_range = retune_RSP_range(1):length(y);
-            window_func = window_func(1):length(y);
-        end
-        retune_part_pre = y(retune_RSP_range) .* window_func'; %apply WF
-        retune_part = pitch_shift_Npt(retune_part_pre,retune_ratio); %PS
-        middle = floor(length(retune_part)/2); %center of new window
-        %track for length-preserving
-        retune_lengthtrack = retune_lengthtrack - retune_RSP;
-        while(retune_lengthtrack < 0)
-            %Overlap Add
-            edge = c+length(retune_part)-1;
-            if(length(y_retunedHE) < edge)
-                y_retunedHE = [y_retunedHE zeros(1,1+2^15)]; %allocate more
-            end
-            y_retunedHE(c:edge) = retune_part + y_retunedHE(c:edge);
-            %smooth end of windows to remove buzzing
-%             smoothingsize = 0; %0 disables?
-%             if(c > smoothingsize+2 && smoothingsize > 0) %no first window
-%                 y_retunedHE(c-smoothingsize+1:c) = linspace(y_retunedHE(c-smoothingsize+1),y_retunedHE(c),smoothingsize);
-%             end
-            c = c + middle;%length(retune_part);
-            retune_lengthtrack = retune_lengthtrack + length(retune_part);
-        end
-        
-        %harmonize test
-        if(harmonize)
-            %fixed ratio
-            retune_harmonizeratio_fixed = 1.333;
-            %scale harmonization, doesnt support like any scales yet
-            scale_steps = 2; %scale steps up to harmonize
-            [~,hsi] = min(abs(scale_ARRAY_cents - mod(retune_note_cents,1200)));
-            hsi = mod(hsi-1-1,length(scale_ARRAY)) + 1;
-            hsi_h = hsi + scale_steps;
-            hsi_octave = ceil(hsi_h/length(scale_ARRAY));
-            hsi_h = mod(hsi_h-1,length(scale_ARRAY)) + 1;
-            retune_harmonizeratio_scale = scale_ARRAY(hsi_h)/scale_ARRAY(hsi) * hsi_octave;
-            %select which harmonization to use
-            retune_harmonizeratio = retune_harmonizeratio_scale;
-            %same calculations as before
-            retune_part_harmonize = pitch_shift_Npt(retune_part_pre,retune_ratio*retune_harmonizeratio);
-            middle_harmonize = floor(length(retune_part_harmonize)/2); %center of new window
-            retune_lengthtrack_harmonize = retune_lengthtrack_harmonize - retune_RSP;
-            while(retune_lengthtrack_harmonize < 0)
-                %Overlap Add
-                edge_harmonize = c_harmonize+length(retune_part_harmonize)-1;
-                if(length(y_retunedHE_harmonize) < edge_harmonize)
-                    y_retunedHE_harmonize = [y_retunedHE_harmonize zeros(1,1+2^15)];  %allocate more
-                end
-                y_retunedHE_harmonize(c_harmonize:edge_harmonize) = retune_part_harmonize + y_retunedHE_harmonize(c_harmonize:edge_harmonize);
-                c_harmonize = c_harmonize + middle_harmonize;
-                retune_lengthtrack_harmonize = retune_lengthtrack_harmonize + length(retune_part_harmonize);
-            end
-        end
-    end
-    %clip off trailing zeros & normalize to [-1,1]
-    y_retunedHE = normalize(y_retunedHE(1:edge));
-    %harmonize mixing
-    if(harmonize)
-        y_retunedHE_harmonize = normalize(y_retunedHE_harmonize(1:edge));
-        y_retunedHE_harmonize_mix = y_retunedHE_harmonize; %mixed final product
-        if(length(y_retunedHE_harmonize) < length(y_retunedHE))
-            y_retunedHE_harmonize_mix = [y_retunedHE_harmonize zeros(1,length(y_retunedHE)-length(y_retunedHE_harmonize))];
-        end
-        y_retunedHE_harmonize_mix = y_retunedHE_harmonize_mix(1:length(y_retunedHE));
-        y_retunedHE_harmonize_mix = mix([y_retunedHE;y_retunedHE_harmonize_mix]')';
-    end
-    HEcont_ps_elapsedtime = toc; %end timing
-    fprintf("Continuous retuning elapsed time: %.3f seconds\nTotal time: %.3f seconds\nTotal Exec time < sample time?: %s\n",HEcont_ps_elapsedtime,HEcont_pd_elapsedtime+HEcont_ps_elapsedtime,mat2str(HEcont_pd_elapsedtime+HEcont_ps_elapsedtime < length(y)/samplerate));
-    if(length(y_retunedHE) ~= length(y))
-        fprintf("Output sample difference = %d\n",length(y_retunedHE)-length(y));
-    end
-    %graph
-    if(true)
+    if(true) %graph output waveform
       Retunedplot = figure('Name','Retuned waveform (HE)');
         if(playsounds)
             soundedStr = "(sounded 2nd) ";
@@ -824,9 +825,9 @@ if(true) %H,E continuous
         title("y retuned" + soundedStr)
         ylim(ylimits)
     end
-end
+end %end E&H
 
-%% playback pitch shifted wave
+%% output & playback
 %playing sounds through resampling
 % [~, ~, target_f] = fetchnote(R_fQI,A4freq,scale_name,scalemap); %find needed f
 % samplerate_tuned_ratio = target_f/R_fQI; %ratio between needed/found f
@@ -968,23 +969,21 @@ function a = autoc(y,lags,minlag)
     a = a(minlag:lags); %only return range
 end
 
-% function [Eout, Hout] = EH_iterate_forloop(E,H,buffer,maxlag,minlag,newrange_size)
-% end
-
 function [Eout, Hout] = EH_iterate(E,H,buffer,maxlag,minlag,newrange_size)
-%perform iterative calculation for E & H, with matlab vectors
-%minlag here starts at 0. length of outputs = maxlag-minlag
+%perform iterative calculation for E & H, with for loop
+%minlag here starts at 0.
     %coder.inline('always')
     buffer_len = length(buffer);
     range = minlag+1:maxlag; %lag range to use
     for sN = 0:newrange_size-1 %sample number in range
-        L = range; %lag
-            EHC_newterm1 = buffer(buffer_len-sN) .* ones(1,maxlag-minlag);
+        for L = range %lag
+            EHC_newterm1 = buffer(buffer_len-sN);
             EHC_newterm2 = buffer(buffer_len-L-sN);
             EHC_newterm3 = buffer(buffer_len-2*L-sN);
             %EHC_newterm4 = EHC_newterm2;
-            E = E + EHC_newterm1.^2 - EHC_newterm3.^2;
-            H = H + EHC_newterm1.*EHC_newterm2 - EHC_newterm2.*EHC_newterm3;
+            E(L) = E(L) + EHC_newterm1.^2 - EHC_newterm3.^2;
+            H(L) = H(L) + EHC_newterm1.*EHC_newterm2 - EHC_newterm2.*EHC_newterm3;
+        end
     end
     Eout = E;
     Hout = H;
@@ -1049,13 +1048,18 @@ end
 function [pks,locs] = findpeaks_fast_num(y,number)
 %potentially faster peakfinder that quits after a number of peaks are found
 %pks = y values, locs = x values (indices)
-    pks = zeros(1,number); %allocate (faster than growing)
-    locs = pks;
     if(length(y) < 3) %require at least 3 points
         return;
     end
-    num = 0;
-    %I couldn't find a way to make this faster
+    if(number == 1) %zeros function is slow
+        pks = 0;
+    elseif(number == 2)
+        pks = [0 0];
+    else
+        pks = zeros(1,number);
+    end
+    locs = pks;
+    num = 0; %track number of peaks found
     %matches stock output well, may have extra peaks at mesas/end
     for i = 2:length(y)-1 %exclude bounds like stock
         if((y(i) - y(i-1) > 0) && (y(i+1) - y(i) <= 0))
@@ -1213,7 +1217,7 @@ function note_names = notes_from_scale(scale_name,scalemap)
             else
                 note_names = strings(1,scalelen);
                 for a = 1:scalelen
-                    note_names(a) = ['''N' int2str(a-1) ''''];
+                    note_names(a) = ['N' int2str(a-1) '-'];
                 end
             end
     end
@@ -1298,50 +1302,18 @@ function fetchnote_print(x,A4freq,scale_name,scalemap)
 end
 
 function y_new = pitch_shift_Npt(y,ratio)
-%the pitch shifting used on the groups of N points in HE
-    [num, denom] = rat(ratio); %matlab's rational approximator
-    
-    y_new = pitch_shift_Npt_linterp(y,ratio,false); %change length
-    %uncomment below to use
-    %y_new = pitch_shift_ratio(y,num,denom);
-    
-end
-
-function y_new = pitch_shift_ratio(y,num,denom)
-%pitch shifts a data set by a integer ratio n/d
-%n & d will usually be around 3-4 digits (base 10)
-    y_new = y; %init
-    %do the things in here
-    
-    
-    %make sure y_new is set as output
-    
-end
-
-function y_new = pitch_shift_Npt_linterp(y,ratio,retain_length)
 %pitch shifts N points by a ratio through stretch or compress
-%will create discontinuities/jumps esp with retain_length, iffy behavior
-%todo: try and clean this up later?
+    %[num, denom] = rat(ratio); %matlab's rational approximator
     if(ratio == 1 || ratio <= 0) %handle bad cases
         y_new = y;
         return;
     end
     y_to_interp = repmat(y,1,ceil(1/ratio)); %have enough periods avail
-    if(ratio < 1)
+    if(ratio < 1) %for stretch, get length needed
         y_to_interp = y_to_interp(1:round(length(y)/ratio));
     end
     x_new = (0:length(y_to_interp)-1).*ratio; %new dx to interp
-    y_new = interp1(0:length(x_new)-1,y_to_interp,x_new);
-    y_new(isnan(y_new)) = [];
-    if(length(y_new) < length(y))
-        y_new = repmat(y_new,1,ceil(length(y)/length(y_new)));
-        y_new = y_new(1:round(length(y)/ratio));
-    end
-    if(retain_length)
-        y_new(isnan(y_new)) = [];
-        y_new = repmat(y_new,1,ceil(length(y)/length(y_new)));
-        y_new = y_new(1:length(y)); %only use first N points
-    end
+    y_new = interp1(0:length(x_new)-1,y_to_interp,x_new); %do interp
     y_new(isnan(y_new)) = []; %remove null points
 end
 
@@ -1350,3 +1322,4 @@ end
     %#ok<*UNRCH>
     %#ok<*NASGU>
     %#ok<*NUSED>
+    %#ok<*AGROW>
